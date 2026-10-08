@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -96,6 +97,61 @@ func TestSendRetriesOn429AndGivesUp(t *testing.T) {
 	res := newSender(srv.URL, 2).Send(context.Background(), gz(t, "{}"))
 	if res.OK() || res.HTTPStatus != 429 || res.Attempts != 3 || atomic.LoadInt32(&calls) != 3 {
 		t.Fatalf("unexpected result: %+v calls=%d", res, calls)
+	}
+}
+
+func TestSendNeverFollowsRedirects(t *testing.T) {
+	var reachedTarget int32
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&reachedTarget, 1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer target.Close()
+
+	for _, code := range []int{http.StatusMovedPermanently, http.StatusFound, http.StatusTemporaryRedirect, http.StatusPermanentRedirect} {
+		var calls int32
+		src := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			atomic.AddInt32(&calls, 1)
+			http.Redirect(w, r, target.URL+"/elsewhere", code)
+		}))
+		res := newSender(src.URL, 2).Send(context.Background(), gz(t, "{}"))
+		src.Close()
+		if res.OK() || res.Err == nil || res.HTTPStatus != code {
+			t.Fatalf("%d: expected a failed result with the 3xx status, got %+v", code, res)
+		}
+		if res.Attempts != 1 || atomic.LoadInt32(&calls) != 1 {
+			t.Fatalf("%d: a redirect must not be retried, got attempts=%d calls=%d", code, res.Attempts, calls)
+		}
+		var se *StatusError
+		if !errors.As(res.Err, &se) || se.Code != code {
+			t.Fatalf("%d: expected StatusError, got %T %v", code, res.Err, res.Err)
+		}
+	}
+	if atomic.LoadInt32(&reachedTarget) != 0 {
+		t.Fatalf("redirect target received %d requests; the POST must never be replayed or downgraded", reachedTarget)
+	}
+}
+
+func TestSendRedirectNeverDowngradesHTTPS(t *testing.T) {
+	// An https endpoint redirecting to plain http must not be followed: the
+	// only request on the wire is the original TLS one.
+	var plainHits int32
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&plainHits, 1)
+	}))
+	defer plain.Close()
+	tls := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, plain.URL, http.StatusMovedPermanently)
+	}))
+	defer tls.Close()
+
+	s := New(Options{URL: tls.URL, Retries: 1, Backoff: time.Millisecond, Transport: tls.Client().Transport})
+	res := s.Send(context.Background(), gz(t, "{}"))
+	if res.OK() || res.HTTPStatus != http.StatusMovedPermanently {
+		t.Fatalf("unexpected result: %+v", res)
+	}
+	if atomic.LoadInt32(&plainHits) != 0 {
+		t.Fatal("https request was downgraded to http via redirect")
 	}
 }
 

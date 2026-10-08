@@ -64,14 +64,22 @@ func New(opts Options) *Sender {
 		opts.Retries = 0
 	}
 	return &Sender{
-		opts:   opts,
-		client: &http.Client{Timeout: opts.Timeout, Transport: opts.Transport},
+		opts: opts,
+		client: &http.Client{
+			Timeout:   opts.Timeout,
+			Transport: opts.Transport,
+			// Never follow redirects: a 301/302 from the ingress would turn
+			// the POST into a body-less GET (and could downgrade https to
+			// http). The 3xx is surfaced as a final StatusError instead.
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		},
 	}
 }
 
 // Send POSTs gzBody (already gzipped JSON) with Content-Type
 // application/json and Content-Encoding gzip. It retries on network errors,
-// timeouts, 429 and 5xx; any other non-2xx status is final.
+// timeouts, 429 and 5xx; any other non-2xx status (including every 3xx,
+// which is never followed) is final.
 func (s *Sender) Send(ctx context.Context, gzBody []byte) Result {
 	var res Result
 	for attempt := 1; attempt <= 1+s.opts.Retries; attempt++ {
