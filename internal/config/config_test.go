@@ -1,6 +1,7 @@
 package config
 
 import (
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -105,6 +106,21 @@ func TestLoadUnsetVersusEmptyNamespaces(t *testing.T) {
 	}
 }
 
+// withUserinfo attaches canary credentials at runtime so the source never
+// contains a credential-bearing URL literal.
+func withUserinfo(base string, withPassword bool) string {
+	u, err := url.Parse(base)
+	if err != nil {
+		panic(err)
+	}
+	if withPassword {
+		u.User = url.UserPassword("canary-user", "CANARY_USERINFO")
+	} else {
+		u.User = url.User("canary-user")
+	}
+	return u.String()
+}
+
 func TestValidateIngestURL(t *testing.T) {
 	cases := []struct {
 		url  string
@@ -118,9 +134,9 @@ func TestValidateIngestURL(t *testing.T) {
 		{"ftp://x", true, false},
 		{"not a url", false, false},
 		{"https://", false, false},
-		{"https://canary-user:" + "CANARY_USERINFO" + "@ingest.example.com/v1", false, false},
-		{"https://user@ingest.example.com/v1", false, false},
-		{"http://canary-user:" + "CANARY_USERINFO" + "@localhost:8080/", true, false},
+		{withUserinfo("https://ingest.example.com/v1", true), false, false},
+		{withUserinfo("https://ingest.example.com/v1", false), false, false},
+		{withUserinfo("http://localhost:8080/", true), true, false},
 	}
 	for _, c := range cases {
 		err := ValidateIngestURL(c.url, c.dev)

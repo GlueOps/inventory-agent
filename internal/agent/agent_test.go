@@ -10,6 +10,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"regexp"
 	"strings"
 	"testing"
@@ -33,8 +34,8 @@ import (
 )
 
 const (
-	secretMarker = "SECRET_MARKER_argocd_admin_password"
-	podEnvMarker = "POD_ENV_MARKER_aws_secret"
+	secretMarker = "CANARY_ARGOCD_ADMIN_VALUE" // planted in a non-Helm Secret
+	podEnvMarker = "CANARY_POD_ENV_VALUE"      // planted as a pod env value
 )
 
 type fakeSender struct {
@@ -180,7 +181,7 @@ func TestRunExitsZeroOnEveryFailureMode(t *testing.T) {
 		"userinfo in url": {
 			cfg: func() config.Config {
 				c := baseConfig()
-				c.IngestURL = "https://canary-user:" + "CANARY_USERINFO" + "@ingest.example.com/v1"
+				c.IngestURL = withUserinfo("https://ingest.example.com/v1")
 				return c
 			},
 			client: fixtureClient(), sender: &fakeSender{}, status: StatusInvalidIngestURL,
@@ -369,18 +370,29 @@ func TestRunSendFailedLogNeverContainsURLSecrets(t *testing.T) {
 		cfg.DevMode = true
 		cfg.Retries = 0
 		cfg.HTTPTimeout = 50 * time.Millisecond
-		cfg.IngestURL = base + "/ingest/SECRET_PATH_SEGMENT?token=SECRET_QUERY_TOKEN"
+		cfg.IngestURL = base + "/ingest/CANARY_PATH_SEGMENT?token=CANARY_QUERY_VALUE"
 		var logs bytes.Buffer
 		code, summary := Run(context.Background(), cfg, Deps{Client: fixtureClient(), Version: "t"}, logging.New("debug", &logs))
 		if code != 0 || summary.Status != StatusSendFailed {
 			t.Fatalf("%s: unexpected: code=%d summary=%+v", name, code, summary)
 		}
-		for _, f := range []string{"SECRET_PATH_SEGMENT", "SECRET_QUERY_TOKEN", "/ingest"} {
+		for _, f := range []string{"CANARY_PATH_SEGMENT", "CANARY_QUERY_VALUE", "/ingest"} {
 			if strings.Contains(logs.String(), f) {
 				t.Errorf("%s: logs leak %q:\n%s", name, f, logs.String())
 			}
 		}
 	}
+}
+
+// withUserinfo adds canary credentials to a URL at runtime so the source
+// never contains a credential-bearing URL literal.
+func withUserinfo(base string) string {
+	u, err := url.Parse(base)
+	if err != nil {
+		panic(err)
+	}
+	u.User = url.UserPassword("canary-user", "CANARY_USERINFO")
+	return u.String()
 }
 
 func TestNewRunIDFormat(t *testing.T) {

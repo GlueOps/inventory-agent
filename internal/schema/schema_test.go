@@ -160,7 +160,7 @@ func TestSchemaRejectsExtraAndMissingFields(t *testing.T) {
 	_ = json.Unmarshal(raw, &v)
 
 	// Extra field at top level.
-	v["env"] = "SECRET=hunter2"
+	v["env"] = "CANARY_EXTRA_PROPERTY_VALUE"
 	if errs := validateJSON(s, s, v, "$"); len(errs) == 0 {
 		t.Fatal("expected top-level extra property to be rejected")
 	}
@@ -168,7 +168,7 @@ func TestSchemaRejectsExtraAndMissingFields(t *testing.T) {
 
 	// Extra field inside a pod_images row (simulates a pod spec leak).
 	rows := v["datasets"].(map[string]any)["pod_images"].(map[string]any)["data"].([]any)
-	rows[0].(map[string]any)["env"] = []any{"AWS_SECRET_ACCESS_KEY=abc"}
+	rows[0].(map[string]any)["env"] = []any{"CANARY_POD_ENV_VALUE"}
 	if errs := validateJSON(s, s, v, "$"); len(errs) == 0 {
 		t.Fatal("expected pod_images extra property to be rejected")
 	}
@@ -223,7 +223,7 @@ func TestStructWithExtraFieldFails(t *testing.T) {
 		Status:              StatusOK,
 		NamespacesRequested: []string{"kube-system"},
 		NamespacesDenied:    []string{},
-		Data:                []leakyPodImage{{PodImage: base.Datasets.PodImages.Data[0], Env: []string{"TOKEN=abc"}}},
+		Data:                []leakyPodImage{{PodImage: base.Datasets.PodImages.Data[0], Env: []string{"CANARY_POD_ENV_VALUE"}}},
 	}
 	raw, _ := json.Marshal(leaky)
 	var v any

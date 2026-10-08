@@ -16,16 +16,18 @@ import (
 	"github.com/glueops/inventory-agent/internal/logging"
 )
 
-// Sensitive markers planted in fixtures. Tests assert none of them ever
-// appears in the payload or in the captured logs.
+// Canary markers planted in fixtures where sensitive data would live
+// (values, manifests, env values, non-Helm Secret data). Tests assert none
+// of them ever appears in the payload or in the captured logs. They are
+// deliberately shaped so secret scanners do not match them.
 const (
-	markerValues      = "VALUES_MARKER_hunter2_db_password"
-	markerManifest    = "MANIFEST_MARKER_kind_Deployment_rendered"
-	markerHooks       = "HOOKS_MARKER_pre_install_job"
-	markerDescription = "DESCRIPTION_MARKER_raw_error_text"
-	markerPodEnv      = "POD_ENV_MARKER_AWS_SECRET_ACCESS_KEY"
-	markerPodArgs     = "POD_ARGS_MARKER_--token=abc"
-	markerOtherSecret = "OTHER_SECRET_MARKER_argocd_admin"
+	markerValues      = "CANARY_HELM_VALUES"
+	markerManifest    = "CANARY_HELM_MANIFEST"
+	markerHooks       = "CANARY_HELM_HOOKS"
+	markerDescription = "CANARY_HELM_DESCRIPTION"
+	markerPodEnv      = "CANARY_POD_ENV_VALUE"
+	markerPodArgs     = "CANARY_POD_ARGS_VALUE"
+	markerOtherSecret = "CANARY_ARGOCD_ADMIN_VALUE"
 )
 
 var sensitiveMarkers = []string{

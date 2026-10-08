@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -203,10 +204,13 @@ func TestSendConnectionRefused(t *testing.T) {
 // non-2xx errors must not echo the path, query string or userinfo of the
 // ingest URL (they end up in the send_failed log line).
 func TestSendErrorsNeverContainURLSecrets(t *testing.T) {
-	const secretPath = "/ingest/SECRET_PATH_SEGMENT"
-	const secretQuery = "?token=SECRET_QUERY_TOKEN"
-	const userinfo = "canary-user:" + "CANARY_USERINFO" + "@"
-	forbidden := []string{"SECRET_PATH_SEGMENT", "SECRET_QUERY_TOKEN", "CANARY_USERINFO", "canary-user", secretPath}
+	// Canary values stand in for anything sensitive a URL could carry. The
+	// userinfo is attached at runtime so the source never contains a
+	// credential-bearing URL literal.
+	const canaryPath = "/ingest/CANARY_PATH_SEGMENT"
+	const canaryQuery = "token=CANARY_QUERY_VALUE"
+	canaryUser := url.UserPassword("canary-user", "CANARY_USERINFO")
+	forbidden := []string{"CANARY_PATH_SEGMENT", "CANARY_QUERY_VALUE", "CANARY_USERINFO", "canary-user", canaryPath}
 
 	hang := make(chan struct{})
 	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-hang }))
@@ -218,14 +222,22 @@ func TestSendErrorsNeverContainURLSecrets(t *testing.T) {
 	closedURL := closed.URL
 	closed.Close()
 
-	withSecrets := func(base string) string {
-		return strings.Replace(base, "http://", "http://"+userinfo, 1) + secretPath + secretQuery
+	withCanaries := func(base string) string {
+		u, err := url.Parse(base)
+		if err != nil {
+			t.Fatal(err)
+		}
+		u.User = canaryUser
+		u.Path = canaryPath
+		u.RawQuery = canaryQuery
+		return u.String()
 	}
+	unparseable := (&url.URL{Scheme: "http", User: canaryUser, Host: "bad host", Path: canaryPath, RawQuery: canaryQuery}).String()
 	cases := map[string]string{
-		"connection refused": withSecrets(closedURL),
-		"timeout":            withSecrets(slow.URL),
-		"non-2xx":            withSecrets(failing.URL),
-		"unparseable":        "http://" + userinfo + "bad host" + secretPath + secretQuery,
+		"connection refused": withCanaries(closedURL),
+		"timeout":            withCanaries(slow.URL),
+		"non-2xx":            withCanaries(failing.URL),
+		"unparseable":        unparseable,
 	}
 	for name, u := range cases {
 		res := New(Options{URL: u, Timeout: 50 * time.Millisecond, Retries: 0}).Send(context.Background(), gz(t, "{}"))
