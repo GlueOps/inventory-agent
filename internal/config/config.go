@@ -48,25 +48,45 @@ type Config struct {
 	Retries int
 }
 
-// Load reads configuration through getenv (usually os.Getenv) and validates
-// it. The returned error is suitable for logging; it never contains values
-// other than the offending variable name and a short reason.
-func Load(getenv func(string) string) (Config, error) {
+// Load reads configuration through lookup (usually os.LookupEnv) and
+// validates it. The returned error is suitable for logging; it never contains
+// values other than the offending variable name and a short reason.
+//
+// For most variables an empty value means "use the default". POD_NAMESPACES
+// and HELM_NAMESPACE are different: unset means the default, but set to an
+// empty (or whitespace/comma-only) value is a configuration error, because
+// the chart always sets them and an empty list would silently collect
+// nothing.
+func Load(lookup func(string) (string, bool)) (Config, error) {
 	var errs []error
 	get := func(key, def string) string {
-		v := strings.TrimSpace(getenv(key))
+		v, _ := lookup(key)
+		v = strings.TrimSpace(v)
 		if v == "" {
 			return def
 		}
 		return v
 	}
+	// getSet returns the value or default and whether a set-but-empty value
+	// was encountered.
+	getSet := func(key, def string) (string, bool) {
+		v, ok := lookup(key)
+		if !ok {
+			return def, false
+		}
+		return strings.TrimSpace(v), true
+	}
 
 	cfg := Config{
 		CaptainDomain:        get("CAPTAIN_DOMAIN", ""),
 		IngestURL:            get("INGEST_URL", ""),
-		HelmNamespace:        get("HELM_NAMESPACE", DefaultHelmNamespace),
 		PlatformChartVersion: get("GLUEOPS_PLATFORM_CHART_VERSION", ""),
 		LogLevel:             get("LOG_LEVEL", DefaultLogLevel),
+	}
+
+	var explicit bool
+	if cfg.HelmNamespace, explicit = getSet("HELM_NAMESPACE", DefaultHelmNamespace); explicit && cfg.HelmNamespace == "" {
+		errs = append(errs, errors.New("HELM_NAMESPACE is set but empty"))
 	}
 
 	switch {
@@ -76,7 +96,11 @@ func Load(getenv func(string) string) (Config, error) {
 		errs = append(errs, errors.New("CAPTAIN_DOMAIN still contains \"placeholder\""))
 	}
 
-	cfg.PodNamespaces = splitList(get("POD_NAMESPACES", DefaultPodNamespaces))
+	podNamespaces, explicit := getSet("POD_NAMESPACES", DefaultPodNamespaces)
+	cfg.PodNamespaces = splitList(podNamespaces)
+	if explicit && len(cfg.PodNamespaces) == 0 {
+		errs = append(errs, errors.New("POD_NAMESPACES is set but contains no namespaces"))
+	}
 
 	var err error
 	if cfg.DevMode, err = parseBool(get("DEV_MODE", "false")); err != nil {

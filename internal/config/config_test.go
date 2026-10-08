@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-func env(m map[string]string) func(string) string {
-	return func(k string) string { return m[k] }
+func env(m map[string]string) func(string) (string, bool) {
+	return func(k string) (string, bool) { v, ok := m[k]; return v, ok }
 }
 
 func TestLoadDefaults(t *testing.T) {
@@ -63,6 +63,31 @@ func TestLoadRejectsBadValues(t *testing.T) {
 	for name, m := range cases {
 		if _, err := Load(env(m)); err == nil {
 			t.Errorf("%s: expected error", name)
+		}
+	}
+}
+
+func TestLoadUnsetVersusEmptyNamespaces(t *testing.T) {
+	base := map[string]string{"CAPTAIN_DOMAIN": "x.com"}
+
+	// Unset: defaults apply.
+	cfg, err := Load(env(base))
+	if err != nil || cfg.HelmNamespace != DefaultHelmNamespace || len(cfg.PodNamespaces) != 2 {
+		t.Fatalf("unset should default: %+v %v", cfg, err)
+	}
+
+	// Set but empty (or effectively empty): invalid_config.
+	for name, m := range map[string]map[string]string{
+		"POD_NAMESPACES empty":       {"CAPTAIN_DOMAIN": "x.com", "POD_NAMESPACES": ""},
+		"POD_NAMESPACES whitespace":  {"CAPTAIN_DOMAIN": "x.com", "POD_NAMESPACES": "   "},
+		"POD_NAMESPACES only commas": {"CAPTAIN_DOMAIN": "x.com", "POD_NAMESPACES": ", ,,"},
+		"HELM_NAMESPACE empty":       {"CAPTAIN_DOMAIN": "x.com", "HELM_NAMESPACE": ""},
+		"HELM_NAMESPACE whitespace":  {"CAPTAIN_DOMAIN": "x.com", "HELM_NAMESPACE": " \t"},
+	} {
+		if _, err := Load(env(m)); err == nil {
+			t.Errorf("%s: expected invalid_config error", name)
+		} else if !strings.Contains(err.Error(), "is set but") {
+			t.Errorf("%s: unexpected error text %q", name, err)
 		}
 	}
 }

@@ -30,8 +30,8 @@ All configuration is via environment variables.
 |----------------------------------|----------------------------|-----------------------------------------------------------------------------------------------|
 | `CAPTAIN_DOMAIN`                 | (required)                 | Cluster identity and join key. Rejected if it contains `placeholder`.                        |
 | `INGEST_URL`                     | `""`                       | Receiver URL. Must be `https://`. Empty: log `no_endpoint_configured`, exit 0.               |
-| `POD_NAMESPACES`                 | `kube-system,glueops-core` | Comma-separated namespaces to list pods in. The chart supplies the full list.                |
-| `HELM_NAMESPACE`                 | `glueops-core`             | Namespace whose Helm release Secrets are read.                                               |
+| `POD_NAMESPACES`                 | `kube-system,glueops-core` | Comma-separated namespaces to list pods in. The chart supplies the full list. Set-but-empty is `invalid_config`. |
+| `HELM_NAMESPACE`                 | `glueops-core`             | Namespace whose Helm release Secrets are read. Set-but-empty is `invalid_config`.            |
 | `GLUEOPS_PLATFORM_CHART_VERSION` | `""`                       | Declared chart version, sent as `platform_chart_version`.                                    |
 | `DEV_MODE`                       | `false`                    | Allows `http://` for `INGEST_URL` (local/k3d only).                                          |
 | `LOG_LEVEL`                      | `info`                     | `debug`, `info`, `warn` or `error`.                                                          |

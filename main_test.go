@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-func envFrom(m map[string]string) func(string) string {
-	return func(k string) string { return m[k] }
+func envFrom(m map[string]string) func(string) (string, bool) {
+	return func(k string) (string, bool) { v, ok := m[k]; return v, ok }
 }
 
 // TestRunAlwaysExitsZero drives the real entrypoint with no cluster and no
@@ -24,6 +24,7 @@ func TestRunAlwaysExitsZero(t *testing.T) {
 		"placeholder":     {"CAPTAIN_DOMAIN": "placeholder.onglueops.com", "INGEST_URL": "https://x"},
 		"non-https url":   {"CAPTAIN_DOMAIN": "nonprod.foo.onglueops.com", "INGEST_URL": "http://x"},
 		"bad env numbers": {"CAPTAIN_DOMAIN": "nonprod.foo.onglueops.com", "MAX_POD_ROWS": "-1"},
+		"empty ns list":   {"CAPTAIN_DOMAIN": "nonprod.foo.onglueops.com", "POD_NAMESPACES": ""},
 	}
 	for name, env := range cases {
 		if code := run(envFrom(env)); code != 0 {

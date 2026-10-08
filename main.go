@@ -23,11 +23,12 @@ var version = "dev"
 const runTimeout = 4 * time.Minute
 
 func main() {
-	os.Exit(run(os.Getenv))
+	os.Exit(run(os.LookupEnv))
 }
 
-func run(getenv func(string) string) (code int) {
-	log := logging.New(getenv("LOG_LEVEL"), os.Stdout)
+func run(lookup func(string) (string, bool)) (code int) {
+	level, _ := lookup("LOG_LEVEL")
+	log := logging.New(level, os.Stdout)
 	defer func() {
 		if r := recover(); r != nil {
 			log.Error("unrecovered panic", "reason", logging.ReasonInternalError, "panic", fmt.Sprint(r))
@@ -35,7 +36,7 @@ func run(getenv func(string) string) (code int) {
 		code = 0
 	}()
 
-	cfg, err := config.Load(getenv)
+	cfg, err := config.Load(lookup)
 	if err != nil {
 		log.Error("invalid configuration, nothing collected", "reason", logging.ReasonInvalidConfig, "error", err.Error())
 		return 0
