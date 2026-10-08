@@ -263,6 +263,22 @@ func TestDeriveOwnershipEdgeCases(t *testing.T) {
 			t.Errorf("%s: got %s/%s want %s/%s", name, wk, wn, want[0], want[1])
 		}
 	}
+	// The controller reference wins even when it is not first.
+	pod = podFixture{ns: "x", name: "web-abc-xyz", labels: map[string]string{"pod-template-hash": "abc"}, apps: []string{"a=i"}}.build()
+	pod.OwnerReferences = []metav1.OwnerReference{
+		{APIVersion: "v1", Kind: "ConfigMap", Name: "x"},
+		*ownerRef("ReplicaSet", "web-abc"),
+	}
+	ok, on, wk, wn = deriveOwnership(pod)
+	if *ok != "ReplicaSet" || *on != "web-abc" || wk != "Deployment" || wn != "web" {
+		t.Fatalf("controller reference not preferred: %s %s %s %s", *ok, *on, wk, wn)
+	}
+	// With no reference marked controller the first one is used.
+	pod.OwnerReferences[1].Controller = nil
+	ok, on, wk, wn = deriveOwnership(pod)
+	if *ok != "ConfigMap" || *on != "x" || wk != "ConfigMap" || wn != "x" {
+		t.Fatalf("expected first reference as fallback: %s %s %s %s", *ok, *on, wk, wn)
+	}
 	// ReplicaSet whose name does not end in the hash is left alone.
 	pod = podFixture{ns: "x", name: "p", owner: ownerRef("ReplicaSet", "web-abc"), labels: map[string]string{"pod-template-hash": "zzz"}, apps: []string{"a=i"}}.build()
 	_, _, wk, wn = deriveOwnership(pod)

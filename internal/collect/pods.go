@@ -136,8 +136,9 @@ func podRows(pod *corev1.Pod) []schema.PodImage {
 	return rows
 }
 
-// deriveOwnership returns the pod's direct owner (first ownerReference) and
-// the workload derived from the pod alone:
+// deriveOwnership returns the pod's direct owner (the ownerReference marked
+// controller, else the first one) and the workload derived from the pod
+// alone:
 //
 //	ReplicaSet + pod-template-hash label  -> Deployment (RS name minus "-<hash>")
 //	ReplicaSet without the label          -> ReplicaSet
@@ -148,7 +149,7 @@ func deriveOwnership(pod *corev1.Pod) (ownerKind, ownerName *string, workloadKin
 	if len(pod.OwnerReferences) == 0 {
 		return nil, nil, "Pod", pod.Name
 	}
-	owner := pod.OwnerReferences[0]
+	owner := controllerOwner(pod.OwnerReferences)
 	ownerKind = nullableString(owner.Kind)
 	ownerName = nullableString(owner.Name)
 	workloadKind, workloadName = owner.Kind, owner.Name
@@ -166,6 +167,17 @@ func deriveOwnership(pod *corev1.Pod) (ownerKind, ownerName *string, workloadKin
 		}
 	}
 	return ownerKind, ownerName, workloadKind, workloadName
+}
+
+// controllerOwner picks the ownerReference with controller=true; a pod has
+// at most one. Falls back to the first reference when none is marked.
+func controllerOwner(refs []metav1.OwnerReference) metav1.OwnerReference {
+	for _, r := range refs {
+		if r.Controller != nil && *r.Controller {
+			return r
+		}
+	}
+	return refs[0]
 }
 
 func statusByName(statuses []corev1.ContainerStatus) map[string]*corev1.ContainerStatus {
