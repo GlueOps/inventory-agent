@@ -27,6 +27,7 @@ const (
 	StatusSendFailed           = logging.ReasonSendFailed // collected but not accepted by the receiver
 	StatusNoEndpointConfigured = logging.ReasonNoEndpointConfigured
 	StatusInvalidIngestURL     = logging.ReasonInvalidIngestURL
+	StatusInvalidConfig        = logging.ReasonInvalidConfig // emitted by main before Run
 	StatusInternalError        = logging.ReasonInternalError
 )
 
@@ -49,8 +50,12 @@ type Deps struct {
 
 // Summary is what the final log line reports; returned for tests.
 type Summary struct {
-	RunID      string
-	Status     string
+	RunID  string
+	Status string
+	// Reason is the fixed reason code for a non-ok run, empty when ok.
+	Reason string
+	// Error is a short, log-safe description of what went wrong.
+	Error      string
 	BytesSent  int
 	HTTPStatus int
 	Attempts   int
@@ -71,14 +76,17 @@ func Run(ctx context.Context, cfg config.Config, deps Deps, log *slog.Logger) (e
 	}
 	start := now()
 	summary = Summary{RunID: NewRunID(start), Sections: map[string]string{}}
+	summaryLog := log
 	log = log.With("run_id", summary.RunID)
 
 	defer func() {
 		if r := recover(); r != nil {
 			summary.Status = StatusInternalError
+			summary.Reason = logging.ReasonInternalError
+			summary.Error = "panic: " + fmt.Sprint(r)
 			log.Error("run panicked", "reason", logging.ReasonInternalError, "panic", fmt.Sprint(r))
 		}
-		logSummary(log, summary)
+		LogSummary(summaryLog, summary)
 		exitCode = 0
 	}()
 
@@ -86,11 +94,14 @@ func Run(ctx context.Context, cfg config.Config, deps Deps, log *slog.Logger) (e
 	// to collect for.
 	if cfg.IngestURL == "" {
 		summary.Status = StatusNoEndpointConfigured
+		summary.Reason = logging.ReasonNoEndpointConfigured
 		log.Warn("no ingest endpoint configured, nothing to send", "reason", logging.ReasonNoEndpointConfigured)
 		return 0, summary
 	}
 	if err := config.ValidateIngestURL(cfg.IngestURL, cfg.DevMode); err != nil {
 		summary.Status = StatusInvalidIngestURL
+		summary.Reason = logging.ReasonInvalidIngestURL
+		summary.Error = err.Error()
 		log.Error("ingest url rejected", "reason", logging.ReasonInvalidIngestURL, "error", err.Error())
 		return 0, summary
 	}
@@ -110,6 +121,8 @@ func Run(ctx context.Context, cfg config.Config, deps Deps, log *slog.Logger) (e
 		// Marshalling closed structs cannot realistically fail; treat it as
 		// an internal error and stop.
 		summary.Status = StatusInternalError
+		summary.Reason = logging.ReasonInternalError
+		summary.Error = err.Error()
 		log.Error("pack failed", "reason", logging.ReasonInternalError, "error", err.Error())
 		return 0, summary
 	}
@@ -142,6 +155,8 @@ func Run(ctx context.Context, cfg config.Config, deps Deps, log *slog.Logger) (e
 	summary.Attempts = res.Attempts
 	if !res.OK() {
 		summary.Status = StatusSendFailed
+		summary.Reason = logging.ReasonSendFailed
+		summary.Error = errString(res.Err)
 		log.Error("snapshot not accepted by receiver", "reason", logging.ReasonSendFailed,
 			"http_status", res.HTTPStatus, "attempts", res.Attempts, "error", errString(res.Err))
 		return 0, summary
@@ -183,8 +198,11 @@ func sectionStatuses(env *schema.Envelope) map[string]string {
 	}
 }
 
-func logSummary(log *slog.Logger, s Summary) {
+// LogSummary emits the single end-of-run summary line. main calls it
+// directly for runs that end before Run starts (invalid configuration).
+func LogSummary(log *slog.Logger, s Summary) {
 	attrs := []any{
+		"run_id", s.RunID,
 		"status", s.Status,
 		"bytes_sent", s.BytesSent,
 		"http_status", s.HTTPStatus,
@@ -195,6 +213,12 @@ func logSummary(log *slog.Logger, s Summary) {
 		"pod_rows", s.PodRows,
 		"truncated", s.Truncated,
 		"helm_decode_failed", s.HelmDecodeFailed,
+	}
+	if s.Reason != "" {
+		attrs = append(attrs, "reason", s.Reason)
+	}
+	if s.Error != "" {
+		attrs = append(attrs, "error", s.Error)
 	}
 	if s.Status == StatusOK {
 		log.Info("run summary", attrs...)

@@ -7,6 +7,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -23,15 +24,26 @@ var version = "dev"
 const runTimeout = 4 * time.Minute
 
 func main() {
-	os.Exit(run(os.LookupEnv))
+	os.Exit(run(os.LookupEnv, os.Stdout))
 }
 
-func run(lookup func(string) (string, bool)) (code int) {
+// run is the whole process: it always returns 0 and always ends with exactly
+// one "run summary" log line, whichever path the run takes.
+func run(lookup func(string) (string, bool), out io.Writer) (code int) {
 	level, _ := lookup("LOG_LEVEL")
-	log := logging.New(level, os.Stdout)
+	log := logging.New(level, out)
+	summarized := false
 	defer func() {
 		if r := recover(); r != nil {
 			log.Error("unrecovered panic", "reason", logging.ReasonInternalError, "panic", fmt.Sprint(r))
+			if !summarized {
+				agent.LogSummary(log, agent.Summary{
+					RunID:  agent.NewRunID(time.Now()),
+					Status: agent.StatusInternalError,
+					Reason: logging.ReasonInternalError,
+					Error:  "panic: " + fmt.Sprint(r),
+				})
+			}
 		}
 		code = 0
 	}()
@@ -39,6 +51,13 @@ func run(lookup func(string) (string, bool)) (code int) {
 	cfg, err := config.Load(lookup)
 	if err != nil {
 		log.Error("invalid configuration, nothing collected", "reason", logging.ReasonInvalidConfig, "error", err.Error())
+		agent.LogSummary(log, agent.Summary{
+			RunID:  agent.NewRunID(time.Now()),
+			Status: agent.StatusInvalidConfig,
+			Reason: logging.ReasonInvalidConfig,
+			Error:  err.Error(),
+		})
+		summarized = true
 		return 0
 	}
 
@@ -55,5 +74,6 @@ func run(lookup func(string) (string, bool)) (code int) {
 	}
 
 	code, _ = agent.Run(ctx, cfg, deps, log)
+	summarized = true
 	return code
 }
