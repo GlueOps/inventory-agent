@@ -1,0 +1,204 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/glueops/inventory-agent/schema/payload.schema.json",
+  "title": "GlueOps inventory snapshot",
+  "description": "One envelope per inventory-agent run. additionalProperties is false at every level: any field not listed here is a bug.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "captain_domain",
+    "cluster_uid",
+    "run_id",
+    "collected_at",
+    "collector_version",
+    "platform_chart_version",
+    "datasets"
+  ],
+  "properties": {
+    "schema_version": { "type": "integer", "minimum": 1 },
+    "captain_domain": { "type": "string", "minLength": 1 },
+    "cluster_uid": { "type": ["string", "null"] },
+    "run_id": { "type": "string", "pattern": "^[0-9]{14}_[0-9a-f]{8}$" },
+    "collected_at": { "$ref": "#/$defs/timestamp" },
+    "collector_version": { "type": "string" },
+    "platform_chart_version": { "type": "string" },
+    "datasets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cluster", "helm_releases", "pod_images"],
+      "properties": {
+        "cluster": { "$ref": "#/$defs/cluster_section" },
+        "helm_releases": { "$ref": "#/$defs/helm_releases_section" },
+        "pod_images": { "$ref": "#/$defs/pod_images_section" }
+      }
+    }
+  },
+  "$defs": {
+    "timestamp": {
+      "description": "RFC 3339, UTC, millisecond precision, Z suffix.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    },
+    "nullable_timestamp": {
+      "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/timestamp" }]
+    },
+    "status": { "type": "string", "enum": ["ok", "error"] },
+    "error_code": {
+      "type": "string",
+      "enum": ["rbac_denied", "api_unavailable", "decode_failed", "internal_error"]
+    },
+    "cluster_section": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "status", "data"],
+      "properties": {
+        "schema_version": { "type": "integer", "minimum": 1 },
+        "status": { "$ref": "#/$defs/status" },
+        "error": { "$ref": "#/$defs/error_code" },
+        "data": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/cluster_data" }] }
+      }
+    },
+    "cluster_data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["k8s_version", "k8s_major", "k8s_minor", "platform", "nodes"],
+      "properties": {
+        "k8s_version": { "type": "string" },
+        "k8s_major": { "type": "string" },
+        "k8s_minor": { "type": "string" },
+        "platform": { "type": "string" },
+        "nodes": { "type": "array", "items": { "$ref": "#/$defs/node" } }
+      }
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "node_name",
+        "kubelet_version",
+        "os_image",
+        "operating_system",
+        "architecture",
+        "kernel_version",
+        "container_runtime_version"
+      ],
+      "properties": {
+        "node_name": { "type": "string" },
+        "kubelet_version": { "type": "string" },
+        "os_image": { "type": "string" },
+        "operating_system": { "type": "string" },
+        "architecture": { "type": "string" },
+        "kernel_version": { "type": "string" },
+        "container_runtime_version": { "type": "string" }
+      }
+    },
+    "helm_releases_section": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "status", "data"],
+      "properties": {
+        "schema_version": { "type": "integer", "minimum": 1 },
+        "status": { "$ref": "#/$defs/status" },
+        "error": { "$ref": "#/$defs/error_code" },
+        "data": {
+          "anyOf": [
+            { "type": "null" },
+            { "type": "array", "items": { "$ref": "#/$defs/helm_release" } }
+          ]
+        }
+      }
+    },
+    "helm_release": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "release_name",
+        "namespace",
+        "chart_name",
+        "chart_version",
+        "app_version",
+        "revision",
+        "status",
+        "first_deployed",
+        "last_deployed"
+      ],
+      "properties": {
+        "release_name": { "type": "string" },
+        "namespace": { "type": "string" },
+        "chart_name": { "type": "string" },
+        "chart_version": { "type": "string" },
+        "app_version": { "type": "string" },
+        "revision": { "type": "integer", "minimum": 0 },
+        "status": { "type": "string" },
+        "first_deployed": { "$ref": "#/$defs/nullable_timestamp" },
+        "last_deployed": { "$ref": "#/$defs/nullable_timestamp" }
+      }
+    },
+    "pod_images_section": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "status",
+        "namespaces_requested",
+        "namespaces_denied",
+        "truncated",
+        "data"
+      ],
+      "properties": {
+        "schema_version": { "type": "integer", "minimum": 1 },
+        "status": { "$ref": "#/$defs/status" },
+        "error": { "$ref": "#/$defs/error_code" },
+        "namespaces_requested": { "type": "array", "items": { "type": "string" } },
+        "namespaces_denied": { "type": "array", "items": { "type": "string" } },
+        "truncated": { "type": "boolean" },
+        "data": {
+          "anyOf": [
+            { "type": "null" },
+            { "type": "array", "items": { "$ref": "#/$defs/pod_image" } }
+          ]
+        }
+      }
+    },
+    "pod_image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "namespace",
+        "pod_name",
+        "pod_phase",
+        "node_name",
+        "owner_kind",
+        "owner_name",
+        "workload_kind",
+        "workload_name",
+        "container_name",
+        "container_type",
+        "image",
+        "image_id",
+        "image_digest"
+      ],
+      "properties": {
+        "namespace": { "type": "string" },
+        "pod_name": { "type": "string" },
+        "pod_phase": { "type": "string" },
+        "node_name": { "type": ["string", "null"] },
+        "owner_kind": { "type": ["string", "null"] },
+        "owner_name": { "type": ["string", "null"] },
+        "workload_kind": { "type": "string" },
+        "workload_name": { "type": "string" },
+        "container_name": { "type": "string" },
+        "container_type": { "type": "string", "enum": ["app", "init"] },
+        "image": { "type": "string" },
+        "image_id": { "type": ["string", "null"] },
+        "image_digest": {
+          "anyOf": [
+            { "type": "null" },
+            { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+          ]
+        }
+      }
+    }
+  }
+}
