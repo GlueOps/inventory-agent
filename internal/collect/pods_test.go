@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strconv"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -170,29 +172,104 @@ func TestPodImagesTruncation(t *testing.T) {
 	}
 }
 
-func TestPodImagesDeniedAndMissingNamespaces(t *testing.T) {
+func TestPodImagesPartialDenialStaysOK(t *testing.T) {
 	client := podsClient(k3dAndEKSPods()...)
 	client.PrependReactor("list", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
-		switch action.GetNamespace() {
-		case "glueops-core-denied":
+		if action.GetNamespace() == "glueops-core-denied" {
 			return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "pods"}, "", errors.New("denied"))
-		case "glueops-core-missing":
-			return true, nil, apierrors.NewNotFound(schema.GroupResource{Resource: "namespaces"}, "glueops-core-missing")
 		}
 		return false, nil, nil
 	})
 	log, _ := testLogger()
 	section := PodImages(context.Background(), client, PodImagesParams{
-		Namespaces: []string{"kube-system", "glueops-core-denied", "glueops-core-missing", "glueops-core"}, MaxRows: 5000,
+		Namespaces: []string{"kube-system", "glueops-core-denied", "glueops-core-does-not-exist", "glueops-core"}, MaxRows: 5000,
 	}, log)
 	if section.Status != payload.StatusOK {
 		t.Fatalf("expected ok, got %+v", section)
 	}
-	if !reflect.DeepEqual(section.NamespacesDenied, []string{"glueops-core-denied", "glueops-core-missing"}) {
+	// Only RBAC refusals are "denied"; a namespace that does not exist lists
+	// as empty and is not recorded anywhere.
+	if !reflect.DeepEqual(section.NamespacesDenied, []string{"glueops-core-denied"}) {
 		t.Fatalf("unexpected denied: %v", section.NamespacesDenied)
 	}
 	if len(section.Data) != 13 {
 		t.Fatalf("expected rows from readable namespaces, got %d", len(section.Data))
+	}
+}
+
+// pagingLister serves pods in fixed-size pages with Continue tokens and
+// records every call so the test can assert Limit/Continue handling.
+type pagingLister struct {
+	pods     map[string][]corev1.Pod
+	pageSize int
+	calls    []metav1.ListOptions
+}
+
+func (l *pagingLister) list(_ context.Context, ns string, opts metav1.ListOptions) (*corev1.PodList, error) {
+	l.calls = append(l.calls, opts)
+	all := l.pods[ns]
+	start := 0
+	if opts.Continue != "" { // token format: "<ns>:<next index>"
+		start, _ = strconv.Atoi(opts.Continue[strings.LastIndex(opts.Continue, ":")+1:])
+	}
+	end := start + l.pageSize
+	if int(opts.Limit) > 0 && int(opts.Limit) < l.pageSize {
+		end = start + int(opts.Limit)
+	}
+	if end > len(all) {
+		end = len(all)
+	}
+	page := &corev1.PodList{Items: append([]corev1.Pod{}, all[start:end]...)}
+	if end < len(all) {
+		page.Continue = fmt.Sprintf("%s:%d", ns, end)
+	}
+	return page, nil
+}
+
+func makePods(ns string, n int) []corev1.Pod {
+	out := make([]corev1.Pod, 0, n)
+	for i := 0; i < n; i++ {
+		out = append(out, *podFixture{ns: ns, name: fmt.Sprintf("p-%04d", i), phase: "Running", node: "n",
+			owner: ownerRef("DaemonSet", "d"), apps: []string{"a=img:1"}}.build())
+	}
+	return out
+}
+
+func TestPodImagesPaginatesWithContinue(t *testing.T) {
+	l := &pagingLister{pageSize: 3, pods: map[string][]corev1.Pod{"a": makePods("a", 7), "b": makePods("b", 2)}}
+	log, _ := testLogger()
+	section := collectPodImages(context.Background(), l.list, PodImagesParams{Namespaces: []string{"a", "b"}, MaxRows: 5000}, log)
+	if section.Status != payload.StatusOK || section.Truncated || len(section.Data) != 9 {
+		t.Fatalf("expected 9 rows across pages, got %+v (rows=%d)", section, len(section.Data))
+	}
+	// a: 3 pages (3,3,1); b: 1 page.
+	if len(l.calls) != 4 {
+		t.Fatalf("expected 4 list calls, got %d: %+v", len(l.calls), l.calls)
+	}
+	for i, c := range l.calls {
+		if c.Limit != podPageSize {
+			t.Errorf("call %d: Limit=%d, want %d", i, c.Limit, podPageSize)
+		}
+	}
+	if l.calls[0].Continue != "" || l.calls[1].Continue != "a:3" || l.calls[2].Continue != "a:6" || l.calls[3].Continue != "" {
+		t.Fatalf("unexpected Continue sequence: %+v", l.calls)
+	}
+	// Rows must come from every page, not just the first.
+	if section.Data[0].PodName != "p-0000" || section.Data[6].PodName != "p-0006" || section.Data[8].Namespace != "b" {
+		t.Fatalf("rows missing from later pages: %+v", section.Data)
+	}
+}
+
+func TestPodImagesStopsPagingAtRowCap(t *testing.T) {
+	l := &pagingLister{pageSize: 3, pods: map[string][]corev1.Pod{"a": makePods("a", 30), "b": makePods("b", 30)}}
+	log, _ := testLogger()
+	section := collectPodImages(context.Background(), l.list, PodImagesParams{Namespaces: []string{"a", "b"}, MaxRows: 4}, log)
+	if !section.Truncated || len(section.Data) != 4 {
+		t.Fatalf("expected truncated at 4 rows, got truncated=%v rows=%d", section.Truncated, len(section.Data))
+	}
+	// Page 1 fills 3 rows, page 2 overflows at the 5th row; nothing further.
+	if len(l.calls) != 2 {
+		t.Fatalf("expected paging to stop after the cap, got %d calls: %+v", len(l.calls), l.calls)
 	}
 }
 

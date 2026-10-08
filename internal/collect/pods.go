@@ -29,53 +29,70 @@ type PodImagesParams struct {
 	MaxRows    int
 }
 
+// podPageSize is the Limit passed to each pod list call; pages are followed
+// with Continue until the namespace is exhausted or the row cap is hit.
+const podPageSize = 500
+
+// podLister lists one page of pods in a namespace. PodImages wires it to the
+// clientset; tests can drive pagination directly.
+type podLister func(ctx context.Context, namespace string, opts metav1.ListOptions) (*corev1.PodList, error)
+
 // PodImages lists pods in each configured namespace and emits one row per
 // container (init and app; ephemeral containers are excluded). A namespace
-// the agent may not read is recorded in namespaces_denied; any other list
-// error fails the section. Rows beyond MaxRows are cut and truncated is set.
+// the agent may not read (403) is recorded in namespaces_denied; a
+// namespace that does not exist simply lists as empty (the API returns 200),
+// and any other list error fails the section. Rows beyond MaxRows are cut,
+// truncated is set and no further pages are fetched.
 func PodImages(ctx context.Context, client kubernetes.Interface, p PodImagesParams, log *slog.Logger) schema.PodImagesSection {
-	section := schema.PodImagesSection{
+	if client == nil {
+		return failPods(newPodImagesSection(p), errNoClient, log)
+	}
+	return collectPodImages(ctx, func(ctx context.Context, ns string, opts metav1.ListOptions) (*corev1.PodList, error) {
+		return client.CoreV1().Pods(ns).List(ctx, opts)
+	}, p, log)
+}
+
+func newPodImagesSection(p PodImagesParams) schema.PodImagesSection {
+	return schema.PodImagesSection{
 		SchemaVersion:       schema.PodImagesSchemaVersion,
 		NamespacesRequested: append([]string{}, p.Namespaces...),
 		NamespacesDenied:    []string{},
 	}
-	if client == nil {
-		return failPods(section, errNoClient, log)
-	}
+}
 
+func collectPodImages(ctx context.Context, list podLister, p PodImagesParams, log *slog.Logger) schema.PodImagesSection {
+	section := newPodImagesSection(p)
 	rows := make([]schema.PodImage, 0, 256)
 	truncated := false
 
 namespaces:
 	for _, ns := range p.Namespaces {
-		list, err := client.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
-			switch {
-			case apierrors.IsForbidden(err):
-				section.NamespacesDenied = append(section.NamespacesDenied, ns)
-				log.Warn("namespace denied", "section", "pod_images", "namespace", ns, "reason", schema.ErrRBACDenied)
-				continue
-			case apierrors.IsNotFound(err):
-				// Should not happen at runtime (the chart only lists
-				// namespaces it renders); recorded as denied so the receiver
-				// sees the gap, with the real reason in the logs.
-				section.NamespacesDenied = append(section.NamespacesDenied, ns)
-				log.Warn("namespace not found", "section", "pod_images", "namespace", ns, "reason", "namespace_not_found")
-				continue
-			default:
+		opts := metav1.ListOptions{Limit: podPageSize}
+		for {
+			page, err := list(ctx, ns, opts)
+			if err != nil {
+				if apierrors.IsForbidden(err) {
+					section.NamespacesDenied = append(section.NamespacesDenied, ns)
+					log.Warn("namespace denied", "section", "pod_images", "namespace", ns, "reason", schema.ErrRBACDenied)
+					continue namespaces
+				}
 				return failPods(section, err, log)
 			}
-		}
-		pods := list.Items
-		sort.Slice(pods, func(i, j int) bool { return pods[i].Name < pods[j].Name })
-		for i := range pods {
-			for _, row := range podRows(&pods[i]) {
-				if p.MaxRows > 0 && len(rows) >= p.MaxRows {
-					truncated = true
-					break namespaces
+			pods := page.Items
+			sort.Slice(pods, func(i, j int) bool { return pods[i].Name < pods[j].Name })
+			for i := range pods {
+				for _, row := range podRows(&pods[i]) {
+					if p.MaxRows > 0 && len(rows) >= p.MaxRows {
+						truncated = true
+						break namespaces
+					}
+					rows = append(rows, row)
 				}
-				rows = append(rows, row)
 			}
+			if page.Continue == "" {
+				break
+			}
+			opts.Continue = page.Continue
 		}
 	}
 
