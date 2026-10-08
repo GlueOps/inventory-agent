@@ -24,8 +24,9 @@ const (
 	helmLabelSelector  = "owner=helm"
 	helmReleaseDataKey = "release"
 	// maxReleaseBytes bounds the decompressed release JSON so a hostile or
-	// corrupt Secret cannot exhaust memory.
-	maxReleaseBytes = 64 << 20
+	// corrupt Secret (a gzip bomb) cannot exhaust memory. Real releases are
+	// well under 1 MiB; Kubernetes itself caps a Secret at 1 MiB encoded.
+	maxReleaseBytes = 16 << 20
 )
 
 // helmRelease is the closed view of Helm's release JSON. encoding/json drops
@@ -131,10 +132,14 @@ func decodeReleaseSecret(sec *corev1.Secret) (schema.HelmRelease, error) {
 		if err != nil {
 			return zero, &DecodeError{Secret: sec.Name, Stage: "gzip", Err: err}
 		}
-		jsonBytes, err = io.ReadAll(io.LimitReader(zr, maxReleaseBytes))
+		var tooLarge bool
+		jsonBytes, tooLarge, err = readBounded(zr, maxReleaseBytes)
 		_ = zr.Close()
 		if err != nil {
 			return zero, &DecodeError{Secret: sec.Name, Stage: "gunzip", Err: err}
+		}
+		if tooLarge {
+			return zero, &DecodeError{Secret: sec.Name, Stage: "release too large"}
 		}
 	} else {
 		jsonBytes = decoded
@@ -170,6 +175,36 @@ func decodeReleaseSecret(sec *corev1.Secret) (schema.HelmRelease, error) {
 		FirstDeployed: formatTimePtr(parseHelmTime(rel.Info.FirstDeployed)),
 		LastDeployed:  formatTimePtr(parseHelmTime(rel.Info.LastDeployed)),
 	}, nil
+}
+
+// readBounded reads at most max bytes from r. It reports tooLarge as soon
+// as a byte beyond max is seen, so the allocation is bounded by max+1 and
+// the buffer grows by plain doubling (about 2x max total allocation in the
+// worst case) instead of io.ReadAll's growth pattern.
+func readBounded(r io.Reader, max int) (data []byte, tooLarge bool, err error) {
+	buf := make([]byte, 0, 64<<10)
+	for {
+		if len(buf) == cap(buf) {
+			next := cap(buf) * 2
+			if next > max+1 {
+				next = max + 1
+			}
+			grown := make([]byte, len(buf), next)
+			copy(grown, buf)
+			buf = grown
+		}
+		n, rerr := r.Read(buf[len(buf):cap(buf)])
+		buf = buf[:len(buf)+n]
+		if len(buf) > max {
+			return nil, true, nil
+		}
+		if rerr == io.EOF {
+			return buf, false, nil
+		}
+		if rerr != nil {
+			return nil, false, rerr
+		}
+	}
 }
 
 func isGzip(b []byte) bool {

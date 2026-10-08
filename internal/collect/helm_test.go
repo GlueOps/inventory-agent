@@ -1,11 +1,16 @@
 package collect
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"reflect"
+	gort "runtime"
 	"sort"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -148,5 +153,57 @@ func TestHelmSkipsNonHelmTypedSecretsEvenWithLabel(t *testing.T) {
 	section := HelmReleases(context.Background(), client, "glueops-core", log)
 	if section.Status != payload.StatusOK || len(section.Data) != 0 {
 		t.Fatalf("expected ok/empty, got %+v", section)
+	}
+}
+
+// TestHelmGzipBombIsBoundedAndSpecific feeds a release Secret whose gzip
+// expands to more than maxReleaseBytes: decoding must stop with the
+// "release too large" stage and allocate well under 64 MiB.
+func TestHelmGzipBombIsBoundedAndSpecific(t *testing.T) {
+	var zipped bytes.Buffer
+	zw := gzip.NewWriter(&zipped)
+	zeros := make([]byte, 1<<20)
+	for i := 0; i < (maxReleaseBytes>>20)+1; i++ { // 17 MiB of zeros
+		if _, err := zw.Write(zeros); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	sec := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "sh.helm.release.v1.bomb.v1", Namespace: "glueops-core", Labels: map[string]string{"owner": "helm"}},
+		Type:       helmSecretType,
+		Data:       map[string][]byte{"release": []byte(base64.StdEncoding.EncodeToString(zipped.Bytes()))},
+	}
+
+	gort.GC()
+	var before, after gort.MemStats
+	gort.ReadMemStats(&before)
+	_, err := decodeReleaseSecret(sec)
+	gort.ReadMemStats(&after)
+
+	var de *DecodeError
+	if !errors.As(err, &de) || de.Stage != "release too large" {
+		t.Fatalf("expected DecodeError with stage %q, got %v", "release too large", err)
+	}
+	if grew := after.TotalAlloc - before.TotalAlloc; grew > 64<<20 {
+		t.Fatalf("decoding allocated %d MiB, want well under 64 MiB", grew>>20)
+	}
+}
+
+func TestReadBounded(t *testing.T) {
+	data, tooLarge, err := readBounded(strings.NewReader("hello"), 5)
+	if err != nil || tooLarge || string(data) != "hello" {
+		t.Fatalf("exact size: %q %v %v", data, tooLarge, err)
+	}
+	_, tooLarge, err = readBounded(strings.NewReader("hello!"), 5)
+	if err != nil || !tooLarge {
+		t.Fatalf("one over: %v %v", tooLarge, err)
+	}
+	big := strings.Repeat("x", 300<<10)
+	data, tooLarge, err = readBounded(strings.NewReader(big), 1<<20)
+	if err != nil || tooLarge || string(data) != big {
+		t.Fatalf("multi-grow read mismatch: len=%d tooLarge=%v err=%v", len(data), tooLarge, err)
 	}
 }
