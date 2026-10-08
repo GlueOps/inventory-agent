@@ -80,6 +80,9 @@ func TestValidateIngestURL(t *testing.T) {
 		{"ftp://x", true, false},
 		{"not a url", false, false},
 		{"https://", false, false},
+		{"https://canary-user:" + "CANARY_USERINFO" + "@ingest.example.com/v1", false, false},
+		{"https://user@ingest.example.com/v1", false, false},
+		{"http://canary-user:" + "CANARY_USERINFO" + "@localhost:8080/", true, false},
 	}
 	for _, c := range cases {
 		err := ValidateIngestURL(c.url, c.dev)

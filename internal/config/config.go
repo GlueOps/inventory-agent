@@ -98,9 +98,10 @@ func Load(getenv func(string) string) (Config, error) {
 	return cfg, errors.Join(errs...)
 }
 
-// ValidateIngestURL checks the URL scheme rule: https is required unless
-// devMode is set, in which case http is also accepted. An empty URL is not
-// an error here; callers treat it as "no endpoint configured".
+// ValidateIngestURL checks the URL rules: https is required unless devMode
+// is set (then http is also accepted), a host is required and userinfo is
+// rejected. An empty URL is not an error here; callers treat it as "no
+// endpoint configured".
 func ValidateIngestURL(raw string, devMode bool) error {
 	if raw == "" {
 		return nil
@@ -111,6 +112,11 @@ func ValidateIngestURL(raw string, devMode bool) error {
 	}
 	if u.Host == "" {
 		return errors.New("INGEST_URL has no host")
+	}
+	if u.User != nil {
+		// Credentials in the URL would be sent as Basic auth; v1 has no
+		// authentication and the token slot is a header, not the URL.
+		return errors.New("INGEST_URL must not contain userinfo")
 	}
 	switch u.Scheme {
 	case "https":

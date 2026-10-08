@@ -176,6 +176,14 @@ func TestRunExitsZeroOnEveryFailureMode(t *testing.T) {
 			cfg:    func() config.Config { c := baseConfig(); c.IngestURL = ""; return c },
 			client: fixtureClient(), sender: &fakeSender{}, status: StatusNoEndpointConfigured,
 		},
+		"userinfo in url": {
+			cfg: func() config.Config {
+				c := baseConfig()
+				c.IngestURL = "https://canary-user:" + "CANARY_USERINFO" + "@ingest.example.com/v1"
+				return c
+			},
+			client: fixtureClient(), sender: &fakeSender{}, status: StatusInvalidIngestURL,
+		},
 		"http without dev mode": {
 			cfg:    func() config.Config { c := baseConfig(); c.IngestURL = "http://ingest.example.com"; return c },
 			client: fixtureClient(), sender: &fakeSender{}, status: StatusInvalidIngestURL,
