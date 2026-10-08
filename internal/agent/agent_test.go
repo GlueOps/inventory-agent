@@ -219,6 +219,20 @@ func TestRunExitsZeroOnEveryFailureMode(t *testing.T) {
 	}
 }
 
+func TestRunSummaryCountsSkippedHelmSecrets(t *testing.T) {
+	client := fixtureClient()
+	_ = client.Tracker().Add(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "sh.helm.release.v1.bad.v1", Namespace: "glueops-core", Labels: map[string]string{"owner": "helm"}},
+		Type:       "helm.sh/release.v1",
+		Data:       map[string][]byte{"release": []byte("garbage")},
+	})
+	sender := &fakeSender{result: send.Result{HTTPStatus: 200, Attempts: 1}}
+	_, summary, logs := runWith(t, baseConfig(), client, sender)
+	if summary.HelmDecodeFailed != 1 || !strings.Contains(logs, `"helm_decode_failed":1`) {
+		t.Fatalf("expected helm_decode_failed=1 in summary, got %+v\n%s", summary, logs)
+	}
+}
+
 func TestRunNoEndpointDoesNotCollectOrSend(t *testing.T) {
 	client := fixtureClient()
 	var listed bool

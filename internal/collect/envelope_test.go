@@ -31,7 +31,7 @@ func TestEnvelopeAssemblesAllSections(t *testing.T) {
 	log, logs := testLogger()
 	now := time.Date(2026, 10, 1, 5, 0, 0, 412_000_000, time.UTC)
 
-	env := Envelope(context.Background(), client, Params{
+	env, stats := Envelope(context.Background(), client, Params{
 		CaptainDomain: "nonprod.foobar.onglueops.com", PlatformChartVersion: "0.80.2", CollectorVersion: "v0.1.0",
 		RunID: "20261001050000_3f9c2a7e", HelmNamespace: "glueops-core",
 		PodNamespaces: []string{"kube-system", "glueops-core"}, MaxPodRows: 5000,
@@ -45,6 +45,9 @@ func TestEnvelopeAssemblesAllSections(t *testing.T) {
 	if env.Datasets.Cluster.Status != payload.StatusOK || env.Datasets.HelmReleases.Status != payload.StatusOK || env.Datasets.PodImages.Status != payload.StatusOK {
 		t.Fatalf("expected all sections ok: %+v", env.Datasets)
 	}
+	if stats.HelmDecodeFailed != 0 {
+		t.Fatalf("unexpected stats: %+v", stats)
+	}
 	raw, _ := json.Marshal(env)
 	assertNoMarkers(t, "envelope", string(raw))
 	assertNoMarkers(t, "logs", logs.String())
@@ -52,7 +55,7 @@ func TestEnvelopeAssemblesAllSections(t *testing.T) {
 
 func TestEnvelopeWithNilClient(t *testing.T) {
 	log, logs := testLogger()
-	env := Envelope(context.Background(), nil, Params{CaptainDomain: "x", PodNamespaces: []string{"kube-system"}}, time.Now(), log)
+	env, _ := Envelope(context.Background(), nil, Params{CaptainDomain: "x", PodNamespaces: []string{"kube-system"}}, time.Now(), log)
 	if env.ClusterUID != nil {
 		t.Fatal("expected nil cluster_uid")
 	}
@@ -76,7 +79,7 @@ func TestEnvelopeSectionPanicIsIsolated(t *testing.T) {
 		panic("boom in secrets")
 	})
 	log, logs := testLogger()
-	env := Envelope(context.Background(), client, Params{CaptainDomain: "x", HelmNamespace: "glueops-core", PodNamespaces: []string{"kube-system"}, MaxPodRows: 10}, time.Now(), log)
+	env, _ := Envelope(context.Background(), client, Params{CaptainDomain: "x", HelmNamespace: "glueops-core", PodNamespaces: []string{"kube-system"}, MaxPodRows: 10}, time.Now(), log)
 	if env.Datasets.HelmReleases.Status != payload.StatusError || env.Datasets.HelmReleases.Error != payload.ErrInternal {
 		t.Fatalf("expected internal_error for helm, got %+v", env.Datasets.HelmReleases)
 	}

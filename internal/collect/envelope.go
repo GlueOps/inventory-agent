@@ -25,9 +25,17 @@ type Params struct {
 	MaxPodRows           int
 }
 
+// Stats are run-level counters that are logged but not part of the payload.
+type Stats struct {
+	// HelmDecodeFailed is the number of Helm release Secrets skipped because
+	// they could not be decoded.
+	HelmDecodeFailed int
+}
+
 // Envelope collects all datasets and assembles the run envelope. client may
 // be nil, in which case every section reports api_unavailable.
-func Envelope(ctx context.Context, client kubernetes.Interface, p Params, now time.Time, log *slog.Logger) schema.Envelope {
+func Envelope(ctx context.Context, client kubernetes.Interface, p Params, now time.Time, log *slog.Logger) (schema.Envelope, Stats) {
+	var stats Stats
 	env := schema.Envelope{
 		SchemaVersion:        schema.EnvelopeSchemaVersion,
 		CaptainDomain:        p.CaptainDomain,
@@ -50,7 +58,9 @@ func Envelope(ctx context.Context, client kubernetes.Interface, p Params, now ti
 	})
 
 	env.Datasets.HelmReleases = guard(log, "helm_releases", func() schema.HelmReleasesSection {
-		return HelmReleases(ctx, client, p.HelmNamespace, log)
+		section, skipped := HelmReleases(ctx, client, p.HelmNamespace, log)
+		stats.HelmDecodeFailed = skipped
+		return section
 	}, func(code string) schema.HelmReleasesSection {
 		return schema.HelmReleasesSection{SchemaVersion: schema.HelmReleasesSchemaVersion, Status: schema.StatusError, Error: code}
 	})
@@ -67,7 +77,7 @@ func Envelope(ctx context.Context, client kubernetes.Interface, p Params, now ti
 		}
 	})
 
-	return env
+	return env, stats
 }
 
 // guard runs a section collector and converts a panic into an

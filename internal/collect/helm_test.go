@@ -39,7 +39,7 @@ func TestHelmReleasesExtractsOnlyMetadata(t *testing.T) {
 	)
 	log, logs := testLogger()
 
-	section := HelmReleases(context.Background(), client, ns, log)
+	section, _ := HelmReleases(context.Background(), client, ns, log)
 	if section.Status != payload.StatusOK || section.Error != "" {
 		t.Fatalf("unexpected section: %+v", section)
 	}
@@ -82,7 +82,7 @@ func TestHelmReleasesExtractsOnlyMetadata(t *testing.T) {
 func TestHelmReleasesEmptyIsOK(t *testing.T) {
 	client := fake.NewClientset(otherSecret("glueops-core"))
 	log, _ := testLogger()
-	section := HelmReleases(context.Background(), client, "glueops-core", log)
+	section, _ := HelmReleases(context.Background(), client, "glueops-core", log)
 	if section.Status != payload.StatusOK || section.Data == nil || len(section.Data) != 0 {
 		t.Fatalf("expected ok with empty list, got %+v", section)
 	}
@@ -98,7 +98,7 @@ func TestHelmReleasesRBACDenied(t *testing.T) {
 		return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "secrets"}, "", errors.New("denied"))
 	})
 	log, logs := testLogger()
-	section := HelmReleases(context.Background(), client, "glueops-core", log)
+	section, _ := HelmReleases(context.Background(), client, "glueops-core", log)
 	if section.Status != payload.StatusError || section.Error != payload.ErrRBACDenied || section.Data != nil {
 		t.Fatalf("expected rbac_denied, got %+v", section)
 	}
@@ -120,11 +120,43 @@ func TestHelmDecodeFailureIsDecodeFailedAndSafeToLog(t *testing.T) {
 	}
 	client := fake.NewClientset(bad)
 	log, logs := testLogger()
-	section := HelmReleases(context.Background(), client, ns, log)
-	if section.Status != payload.StatusError || section.Error != payload.ErrDecodeFailed {
-		t.Fatalf("expected decode_failed, got %+v", section)
+	section, skipped := HelmReleases(context.Background(), client, ns, log)
+	if section.Status != payload.StatusError || section.Error != payload.ErrDecodeFailed || skipped != 1 {
+		t.Fatalf("expected decode_failed when every secret is undecodable, got %+v skipped=%d", section, skipped)
 	}
 	assertNoMarkers(t, "logs", logs.String())
+}
+
+// TestHelmSkipsUndecodableSecretKeepsOthers: one garbage Secret next to a
+// good one must not blind the whole section.
+func TestHelmSkipsUndecodableSecretKeepsOthers(t *testing.T) {
+	ns := "glueops-core"
+	bad := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "sh.helm.release.v1.bad.v1", Namespace: ns, Labels: map[string]string{"owner": "helm"}},
+		Type:       helmSecretType,
+		Data:       map[string][]byte{"release": []byte("!!! not base64 " + markerValues)},
+	}
+	good := helmSecret(t, ns, "argocd", 1, helmReleaseJSON("argocd", ns, 1, "deployed", "argo-cd", "10.2.2", "v3.4.6",
+		"2026-09-29T15:53:59.278Z", "2026-09-29T15:53:59.278Z"))
+	client := fake.NewClientset(bad, good)
+	log, logs := testLogger()
+
+	section, skipped := HelmReleases(context.Background(), client, ns, log)
+	if section.Status != payload.StatusOK || section.Error != "" {
+		t.Fatalf("expected ok, got %+v", section)
+	}
+	if len(section.Data) != 1 || section.Data[0].ReleaseName != "argocd" {
+		t.Fatalf("expected the good release only, got %+v", section.Data)
+	}
+	if skipped != 1 {
+		t.Fatalf("expected skipped=1, got %d", skipped)
+	}
+	out := logs.String()
+	if !strings.Contains(out, `"level":"WARN"`) || !strings.Contains(out, `"reason":"decode_failed"`) ||
+		!strings.Contains(out, `"secret":"sh.helm.release.v1.bad.v1"`) || !strings.Contains(out, `"stage":"base64"`) {
+		t.Fatalf("expected a decode_failed warning naming the secret and stage:\n%s", out)
+	}
+	assertNoMarkers(t, "logs", out)
 }
 
 func TestHelmDecodeAcceptsUncompressedRelease(t *testing.T) {
@@ -150,7 +182,7 @@ func TestHelmSkipsNonHelmTypedSecretsEvenWithLabel(t *testing.T) {
 	sec.Labels = map[string]string{"owner": "helm"}
 	client := fake.NewClientset(sec)
 	log, _ := testLogger()
-	section := HelmReleases(context.Background(), client, "glueops-core", log)
+	section, _ := HelmReleases(context.Background(), client, "glueops-core", log)
 	if section.Status != payload.StatusOK || len(section.Data) != 0 {
 		t.Fatalf("expected ok/empty, got %+v", section)
 	}

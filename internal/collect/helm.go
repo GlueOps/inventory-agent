@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -53,33 +54,40 @@ type helmRelease struct {
 // HelmReleases lists Helm release Secrets in namespace (label selector
 // owner=helm, type helm.sh/release.v1), decodes only the "release" key and
 // keeps the latest revision of each release.
-func HelmReleases(ctx context.Context, client kubernetes.Interface, namespace string, log *slog.Logger) schema.HelmReleasesSection {
-	section := schema.HelmReleasesSection{SchemaVersion: schema.HelmReleasesSchemaVersion}
-	data, err := collectHelmReleases(ctx, client, namespace)
+//
+// A Secret that cannot be decoded is skipped with a warning (secret name and
+// failing stage only) and counted in skipped; the others are still
+// reported. Only when every Helm Secret failed to decode is the section
+// itself marked decode_failed.
+func HelmReleases(ctx context.Context, client kubernetes.Interface, namespace string, log *slog.Logger) (section schema.HelmReleasesSection, skipped int) {
+	section = schema.HelmReleasesSection{SchemaVersion: schema.HelmReleasesSchemaVersion}
+	data, skipped, err := collectHelmReleases(ctx, client, namespace, log)
 	if err != nil {
 		section.Status = schema.StatusError
 		section.Error = Classify(err)
 		log.Warn("section failed", "section", "helm_releases", "reason", section.Error, "error", err.Error())
-		return section
+		return section, skipped
 	}
 	section.Status = schema.StatusOK
 	section.Data = data
-	return section
+	return section, skipped
 }
 
-func collectHelmReleases(ctx context.Context, client kubernetes.Interface, namespace string) ([]schema.HelmRelease, error) {
+func collectHelmReleases(ctx context.Context, client kubernetes.Interface, namespace string, log *slog.Logger) ([]schema.HelmRelease, int, error) {
 	if client == nil {
-		return nil, errNoClient
+		return nil, 0, errNoClient
 	}
 	list, err := client.CoreV1().Secrets(namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: helmLabelSelector,
 		FieldSelector: "type=" + helmSecretType,
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	latest := map[string]schema.HelmRelease{}
+	var seen, skipped int
+	var lastErr error
 	for i := range list.Items {
 		sec := &list.Items[i]
 		// The field selector is advisory (fakes ignore it); never decode a
@@ -87,13 +95,26 @@ func collectHelmReleases(ctx context.Context, client kubernetes.Interface, names
 		if string(sec.Type) != helmSecretType {
 			continue
 		}
+		seen++
 		rel, err := decodeReleaseSecret(sec)
 		if err != nil {
-			return nil, err
+			skipped++
+			lastErr = err
+			var de *DecodeError
+			stage := "unknown"
+			if errors.As(err, &de) {
+				stage = de.Stage
+			}
+			log.Warn("release secret skipped", "section", "helm_releases", "reason", schema.ErrDecodeFailed,
+				"secret", sec.Name, "stage", stage)
+			continue
 		}
 		if cur, ok := latest[rel.ReleaseName]; !ok || rel.Revision > cur.Revision {
 			latest[rel.ReleaseName] = rel
 		}
+	}
+	if seen > 0 && skipped == seen {
+		return nil, skipped, lastErr
 	}
 
 	out := make([]schema.HelmRelease, 0, len(latest))
@@ -101,7 +122,7 @@ func collectHelmReleases(ctx context.Context, client kubernetes.Interface, names
 		out = append(out, r)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ReleaseName < out[j].ReleaseName })
-	return out, nil
+	return out, skipped, nil
 }
 
 // decodeReleaseSecret extracts the nine metadata fields from one Helm

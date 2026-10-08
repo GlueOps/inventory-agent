@@ -57,7 +57,9 @@ type Summary struct {
 	Sections   map[string]string
 	PodRows    int
 	Truncated  bool
-	Envelope   *schema.Envelope
+	// HelmDecodeFailed counts Helm release Secrets skipped as undecodable.
+	HelmDecodeFailed int
+	Envelope         *schema.Envelope
 }
 
 // Run executes one collection run and returns the process exit code, which
@@ -93,7 +95,7 @@ func Run(ctx context.Context, cfg config.Config, deps Deps, log *slog.Logger) (e
 		return 0, summary
 	}
 
-	env := collect.Envelope(ctx, deps.Client, collect.Params{
+	env, stats := collect.Envelope(ctx, deps.Client, collect.Params{
 		CaptainDomain:        cfg.CaptainDomain,
 		PlatformChartVersion: cfg.PlatformChartVersion,
 		CollectorVersion:     deps.Version,
@@ -124,6 +126,7 @@ func Run(ctx context.Context, cfg config.Config, deps Deps, log *slog.Logger) (e
 	summary.Sections = sectionStatuses(&env)
 	summary.PodRows = len(env.Datasets.PodImages.Data)
 	summary.Truncated = env.Datasets.PodImages.Truncated
+	summary.HelmDecodeFailed = stats.HelmDecodeFailed
 
 	sender := deps.Sender
 	if sender == nil {
@@ -191,6 +194,7 @@ func logSummary(log *slog.Logger, s Summary) {
 		"section_pod_images", s.Sections["pod_images"],
 		"pod_rows", s.PodRows,
 		"truncated", s.Truncated,
+		"helm_decode_failed", s.HelmDecodeFailed,
 	}
 	if s.Status == StatusOK {
 		log.Info("run summary", attrs...)
