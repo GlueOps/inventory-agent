@@ -190,7 +190,7 @@ func k3dAndEKSPods() []*corev1.Pod {
 			apps:     []string{"coredns=rancher/mirrored-coredns-coredns:1.14.6"},
 			imageIDs: map[string]string{"coredns": "docker.io/rancher/mirrored-coredns-coredns@" + digestCoreDNS},
 		},
-		{ // DaemonSet (EKS aws-node) with bare containerd sha256 imageID
+		{ // DaemonSet (EKS aws-node) with a bare containerd sha256 imageID (no repo digest)
 			ns: "kube-system", name: "aws-node-x7k2p", phase: "Running", node: "ip-10-0-1-23.ec2.internal",
 			owner: ownerRef("DaemonSet", "aws-node"),
 			apps:  []string{"aws-node=602401143452.dkr.ecr.us-east-1.amazonaws.com/amazon-k8s-cni:v1.19.0"},

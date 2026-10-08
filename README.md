@@ -11,6 +11,12 @@ endpoint, logs one structured summary line, and exits 0 no matter what.
 | `helm_releases` | Helm release Secrets in `HELM_NAMESPACE` (label `owner=helm`) | Nine metadata fields per release, latest revision only                   |
 | `pod_images`    | `list pods` in each `POD_NAMESPACES` entry                    | One row per init/app container: owner, derived workload, image, digest   |
 
+`image_digest` is the registry manifest digest taken from the `@sha256:...`
+suffix of the runtime's `imageID`. A bare `sha256:...` `imageID` (containerd
+with no repo digest) is the image config digest, so `image_digest` is `null`
+while `image_id` keeps the raw value. Pending pods without statuses have both
+`null`.
+
 It never collects values, manifests, hooks, descriptions, env vars, args,
 volumes or any other pod spec field. The payload types are closed Go structs
 (`internal/schema`) mirrored by [`schema/payload.schema.json`](schema/payload.schema.json)

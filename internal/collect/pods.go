@@ -188,14 +188,18 @@ func statusByName(statuses []corev1.ContainerStatus) map[string]*corev1.Containe
 	return m
 }
 
-// Digest normalises a container runtime imageID to "sha256:<64 hex>".
-// Accepted forms: "<repo>@sha256:<hex>", "docker-pullable://<repo>@sha256:<hex>"
-// and a bare "sha256:<hex>" (containerd). Anything else yields nil.
+// Digest normalises a container runtime imageID to the registry manifest
+// digest "sha256:<64 hex>". Accepted forms: "<repo>@sha256:<hex>" and the
+// legacy "docker-pullable://<repo>@sha256:<hex>". A bare "sha256:<hex>"
+// (containerd when no repo digest is known) is the image *config* digest,
+// not a manifest digest, and yields nil (image_id still carries the raw
+// value). Anything else yields nil.
 func Digest(imageID string) *string {
-	s := imageID
-	if i := strings.LastIndex(s, "@"); i >= 0 {
-		s = s[i+1:]
+	i := strings.LastIndex(imageID, "@")
+	if i < 0 {
+		return nil
 	}
+	s := imageID[i+1:]
 	const prefix = "sha256:"
 	if !strings.HasPrefix(s, prefix) || len(s) != len(prefix)+64 || !isLowerHex(s[len(prefix):]) {
 		return nil

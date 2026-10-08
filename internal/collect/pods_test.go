@@ -71,8 +71,9 @@ func TestPodImagesOwnershipAndImages(t *testing.T) {
 	}{
 		{"coredns-c5fdd76cf-bb6t2", "coredns", "ReplicaSet", "coredns-c5fdd76cf", "Deployment", "coredns", "app", "Running", "k3d-captain-agent-4",
 			"docker.io/rancher/mirrored-coredns-coredns@" + digestCoreDNS, digestCoreDNS},
+		// Bare containerd imageID: image_id kept, image_digest null (config digest, not manifest digest).
 		{"aws-node-x7k2p", "aws-node", "DaemonSet", "aws-node", "DaemonSet", "aws-node", "app", "Running", "ip-10-0-1-23.ec2.internal",
-			digestNode, digestNode},
+			digestNode, "<nil>"},
 		{"ebs-csi-node-4jk9z", "init-dir", "DaemonSet", "ebs-csi-node", "DaemonSet", "ebs-csi-node", "init", "Running", "ip-10-0-1-23.ec2.internal",
 			"public.ecr.aws/eks-distro/kubernetes-csi/livenessprobe@" + digestCSI, digestCSI},
 		{"ebs-csi-node-4jk9z", "node-driver-registrar", "DaemonSet", "ebs-csi-node", "DaemonSet", "ebs-csi-node", "app", "Running", "ip-10-0-1-23.ec2.internal",
@@ -227,8 +228,9 @@ func TestDigest(t *testing.T) {
 	hex := "900f9c109f7a33545d3c811516e8376df9019147b750f5ce3e254468769176ea"
 	cases := map[string]string{
 		"docker.io/rancher/coredns@sha256:" + hex: "sha256:" + hex,
-		"sha256:" + hex:                          "sha256:" + hex,
+		"sha256:" + hex:                          "<nil>", // bare config digest is not a manifest digest
 		"docker-pullable://repo/x@sha256:" + hex: "sha256:" + hex,
+		"@sha256:" + hex:                         "sha256:" + hex,
 		"":                                       "<nil>",
 		"docker://abcdef":                        "<nil>",
 		"sha256:short":                           "<nil>",
