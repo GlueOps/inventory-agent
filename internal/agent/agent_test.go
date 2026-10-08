@@ -8,6 +8,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"regexp"
 	"strings"
 	"testing"
@@ -297,6 +299,37 @@ func TestRunRedaction(t *testing.T) {
 	for _, marker := range []string{secretMarker, podEnvMarker, "AWS_SECRET_ACCESS_KEY"} {
 		if bytes.Contains(raw, []byte(marker)) {
 			t.Errorf("decoded payload contains %q", marker)
+		}
+	}
+}
+
+// TestRunSendFailedLogNeverContainsURLSecrets uses the real sender against
+// a closed port and a hanging server; the send_failed line must not echo
+// the ingest URL's path or query string.
+func TestRunSendFailedLogNeverContainsURLSecrets(t *testing.T) {
+	hang := make(chan struct{})
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-hang }))
+	defer slow.Close() // runs last: Close waits for handlers, so hang must be closed first
+	defer close(hang)
+	closed := httptest.NewServer(http.NotFoundHandler())
+	closedURL := closed.URL
+	closed.Close()
+
+	for name, base := range map[string]string{"connection refused": closedURL, "timeout": slow.URL} {
+		cfg := baseConfig()
+		cfg.DevMode = true
+		cfg.Retries = 0
+		cfg.HTTPTimeout = 50 * time.Millisecond
+		cfg.IngestURL = base + "/ingest/SECRET_PATH_SEGMENT?token=SECRET_QUERY_TOKEN"
+		var logs bytes.Buffer
+		code, summary := Run(context.Background(), cfg, Deps{Client: fixtureClient(), Version: "t"}, logging.New("debug", &logs))
+		if code != 0 || summary.Status != StatusSendFailed {
+			t.Fatalf("%s: unexpected: code=%d summary=%+v", name, code, summary)
+		}
+		for _, f := range []string{"SECRET_PATH_SEGMENT", "SECRET_QUERY_TOKEN", "/ingest"} {
+			if strings.Contains(logs.String(), f) {
+				t.Errorf("%s: logs leak %q:\n%s", name, f, logs.String())
+			}
 		}
 	}
 }

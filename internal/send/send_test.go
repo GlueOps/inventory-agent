@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -195,6 +196,48 @@ func TestSendConnectionRefused(t *testing.T) {
 	res := newSender(url, 1).Send(context.Background(), gz(t, "{}"))
 	if res.OK() || res.Attempts != 2 || res.HTTPStatus != 0 {
 		t.Fatalf("unexpected result: %+v", res)
+	}
+}
+
+// TestSendErrorsNeverContainURLSecrets: connection refused, timeout and
+// non-2xx errors must not echo the path, query string or userinfo of the
+// ingest URL (they end up in the send_failed log line).
+func TestSendErrorsNeverContainURLSecrets(t *testing.T) {
+	const secretPath = "/ingest/SECRET_PATH_SEGMENT"
+	const secretQuery = "?token=SECRET_QUERY_TOKEN"
+	const userinfo = "canary-user:" + "CANARY_USERINFO" + "@"
+	forbidden := []string{"SECRET_PATH_SEGMENT", "SECRET_QUERY_TOKEN", "CANARY_USERINFO", "canary-user", secretPath}
+
+	hang := make(chan struct{})
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-hang }))
+	defer slow.Close() // runs last: Close waits for handlers, so hang must be closed first
+	defer close(hang)
+	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(502) }))
+	defer failing.Close()
+	closed := httptest.NewServer(http.NotFoundHandler())
+	closedURL := closed.URL
+	closed.Close()
+
+	withSecrets := func(base string) string {
+		return strings.Replace(base, "http://", "http://"+userinfo, 1) + secretPath + secretQuery
+	}
+	cases := map[string]string{
+		"connection refused": withSecrets(closedURL),
+		"timeout":            withSecrets(slow.URL),
+		"non-2xx":            withSecrets(failing.URL),
+		"unparseable":        "http://" + userinfo + "bad host" + secretPath + secretQuery,
+	}
+	for name, u := range cases {
+		res := New(Options{URL: u, Timeout: 50 * time.Millisecond, Retries: 0}).Send(context.Background(), gz(t, "{}"))
+		if res.OK() || res.Err == nil {
+			t.Fatalf("%s: expected failure, got %+v", name, res)
+		}
+		text := res.Err.Error()
+		for _, f := range forbidden {
+			if strings.Contains(text, f) {
+				t.Errorf("%s: error text leaks %q: %s", name, f, text)
+			}
+		}
 	}
 }
 

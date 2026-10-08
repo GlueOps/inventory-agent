@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -106,7 +108,9 @@ func (s *Sender) Send(ctx context.Context, gzBody []byte) Result {
 func (s *Sender) post(ctx context.Context, body []byte) (int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.opts.URL, bytes.NewReader(body))
 	if err != nil {
-		return 0, err
+		// The parse error would echo the URL; the URL was validated by
+		// config, so only say that building the request failed.
+		return 0, errors.New("building request failed")
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Content-Encoding", "gzip")
@@ -118,7 +122,7 @@ func (s *Sender) post(ctx context.Context, body []byte) (int, error) {
 	}
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return 0, err
+		return 0, sanitize(err)
 	}
 	defer resp.Body.Close()
 	// Drain (bounded) so the connection can be reused; the body is not used.
@@ -133,6 +137,38 @@ func (s *Sender) post(ctx context.Context, body []byte) (int, error) {
 type StatusError struct{ Code int }
 
 func (e *StatusError) Error() string { return fmt.Sprintf("unexpected HTTP status %d", e.Code) }
+
+// TransportError is a transport-level failure with the request URL reduced
+// to its host. *url.Error's text embeds the full URL (path, query string,
+// userinfo), which must never reach the logs; only Op, host and the inner
+// error are kept.
+type TransportError struct {
+	Op   string
+	Host string
+	Err  error
+}
+
+func (e *TransportError) Error() string { return fmt.Sprintf("%s %s: %v", e.Op, e.Host, e.Err) }
+
+func (e *TransportError) Unwrap() error { return e.Err }
+
+// Timeout reports whether the inner error is a timeout (net.Error).
+func (e *TransportError) Timeout() bool {
+	var ne net.Error
+	return errors.As(e.Err, &ne) && ne.Timeout()
+}
+
+func sanitize(err error) error {
+	var ue *url.Error
+	if !errors.As(err, &ue) {
+		return err
+	}
+	host := ""
+	if u, perr := url.Parse(ue.URL); perr == nil {
+		host = u.Host
+	}
+	return &TransportError{Op: ue.Op, Host: host, Err: ue.Err}
+}
 
 func retryable(status int, err error) bool {
 	var se *StatusError
