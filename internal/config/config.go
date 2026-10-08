@@ -36,11 +36,15 @@ type Config struct {
 	PlatformChartVersion string
 	// DevMode relaxes the https-only rule for INGEST_URL.
 	DevMode bool
+	// SendGzip (default true) gzips the body and sets Content-Encoding: gzip.
+	// false sends plain JSON for receivers that cannot gunzip (trial only).
+	SendGzip bool
 	// LogLevel is debug|info|warn|error.
 	LogLevel string
 	// MaxPodRows caps the pod_images rows before truncation.
 	MaxPodRows int
-	// MaxGzipBytes caps the gzipped payload before truncation.
+	// MaxGzipBytes caps the body as actually sent (gzipped when SendGzip,
+	// otherwise the plain JSON) before truncation.
 	MaxGzipBytes int
 	// HTTPTimeout is the per-request timeout for the ingest POST.
 	HTTPTimeout time.Duration
@@ -105,6 +109,9 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	var err error
 	if cfg.DevMode, err = parseBool(get("DEV_MODE", "false")); err != nil {
 		errs = append(errs, fmt.Errorf("DEV_MODE: %w", err))
+	}
+	if cfg.SendGzip, err = parseBool(get("SEND_GZIP", "true")); err != nil {
+		errs = append(errs, fmt.Errorf("SEND_GZIP: %w", err))
 	}
 	if cfg.MaxPodRows, err = parsePositiveInt(get("MAX_POD_ROWS", strconv.Itoa(DefaultMaxPodRows))); err != nil {
 		errs = append(errs, fmt.Errorf("MAX_POD_ROWS: %w", err))

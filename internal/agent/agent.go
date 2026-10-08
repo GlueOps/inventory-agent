@@ -62,6 +62,8 @@ type Summary struct {
 	Sections   map[string]string
 	PodRows    int
 	Truncated  bool
+	// Gzip reports whether the body was gzipped (SEND_GZIP).
+	Gzip bool
 	// HelmDecodeFailed counts Helm release Secrets skipped as undecodable.
 	HelmDecodeFailed int
 	Envelope         *schema.Envelope
@@ -116,7 +118,8 @@ func Run(ctx context.Context, cfg config.Config, deps Deps, log *slog.Logger) (e
 		MaxPodRows:           cfg.MaxPodRows,
 	}, start, log)
 
-	body, dropped, err := send.Pack(&env, cfg.MaxGzipBytes)
+	summary.Gzip = cfg.SendGzip
+	body, dropped, err := send.Pack(&env, send.PackOptions{MaxBytes: cfg.MaxGzipBytes, Gzip: cfg.SendGzip})
 	if err != nil {
 		// Marshalling closed structs cannot realistically fail; treat it as
 		// an internal error and stop.
@@ -128,11 +131,11 @@ func Run(ctx context.Context, cfg config.Config, deps Deps, log *slog.Logger) (e
 	}
 	if dropped > 0 {
 		log.Warn("pod_images truncated to fit size cap", "reason", logging.ReasonPayloadTruncated,
-			"dropped_rows", dropped, "max_gzip_bytes", cfg.MaxGzipBytes, "gzip_bytes", len(body))
+			"dropped_rows", dropped, "max_bytes", cfg.MaxGzipBytes, "body_bytes", len(body), "gzip", cfg.SendGzip)
 	}
 	if cfg.MaxGzipBytes > 0 && len(body) > cfg.MaxGzipBytes {
 		log.Warn("payload exceeds size cap even with no pod_images rows; sending anyway",
-			"reason", logging.ReasonPayloadTruncated, "gzip_bytes", len(body), "max_gzip_bytes", cfg.MaxGzipBytes)
+			"reason", logging.ReasonPayloadTruncated, "body_bytes", len(body), "max_bytes", cfg.MaxGzipBytes, "gzip", cfg.SendGzip)
 	}
 
 	summary.Envelope = &env
@@ -148,6 +151,7 @@ func Run(ctx context.Context, cfg config.Config, deps Deps, log *slog.Logger) (e
 			Timeout:   cfg.HTTPTimeout,
 			Retries:   cfg.Retries,
 			UserAgent: "inventory-agent/" + deps.Version,
+			Encoding:  encodingFor(cfg.SendGzip),
 		})
 	}
 	res := sender.Send(ctx, body)
@@ -212,6 +216,7 @@ func LogSummary(log *slog.Logger, s Summary) {
 		"section_pod_images", s.Sections["pod_images"],
 		"pod_rows", s.PodRows,
 		"truncated", s.Truncated,
+		"gzip", s.Gzip,
 		"helm_decode_failed", s.HelmDecodeFailed,
 	}
 	if s.Reason != "" {
@@ -225,6 +230,13 @@ func LogSummary(log *slog.Logger, s Summary) {
 	} else {
 		log.Warn("run summary", attrs...)
 	}
+}
+
+func encodingFor(gzip bool) string {
+	if gzip {
+		return send.EncodingGzip
+	}
+	return send.EncodingIdentity
 }
 
 func errString(err error) string {

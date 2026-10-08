@@ -16,7 +16,7 @@ func TestLoadDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	if cfg.HelmNamespace != "glueops-core" || cfg.MaxPodRows != 5000 || cfg.MaxGzipBytes != 2097152 ||
-		cfg.HTTPTimeout != 10*time.Second || cfg.Retries != 2 || cfg.DevMode || cfg.LogLevel != "info" {
+		cfg.HTTPTimeout != 10*time.Second || cfg.Retries != 2 || cfg.DevMode || !cfg.SendGzip || cfg.LogLevel != "info" {
 		t.Fatalf("unexpected defaults: %+v", cfg)
 	}
 	if len(cfg.PodNamespaces) != 2 || cfg.PodNamespaces[0] != "kube-system" {
@@ -55,6 +55,7 @@ func TestLoadRejectsBadValues(t *testing.T) {
 		"missing captain domain": {},
 		"placeholder domain":     {"CAPTAIN_DOMAIN": "PLACEHOLDER.onglueops.com"},
 		"bad bool":               {"CAPTAIN_DOMAIN": "x.com", "DEV_MODE": "maybe"},
+		"bad send gzip":          {"CAPTAIN_DOMAIN": "x.com", "SEND_GZIP": "garbage"},
 		"bad rows":               {"CAPTAIN_DOMAIN": "x.com", "MAX_POD_ROWS": "0"},
 		"bad bytes":              {"CAPTAIN_DOMAIN": "x.com", "MAX_GZIP_BYTES": "lots"},
 		"bad timeout":            {"CAPTAIN_DOMAIN": "x.com", "HTTP_TIMEOUT": "-1s"},
@@ -64,6 +65,18 @@ func TestLoadRejectsBadValues(t *testing.T) {
 		if _, err := Load(env(m)); err == nil {
 			t.Errorf("%s: expected error", name)
 		}
+	}
+}
+
+func TestLoadSendGzip(t *testing.T) {
+	for value, want := range map[string]bool{"": true, "true": true, "TRUE": true, "1": true, "false": false, "no": false, "0": false} {
+		cfg, err := Load(env(map[string]string{"CAPTAIN_DOMAIN": "x.com", "SEND_GZIP": value}))
+		if err != nil || cfg.SendGzip != want {
+			t.Errorf("SEND_GZIP=%q: got %v, %v; want %v", value, cfg.SendGzip, err, want)
+		}
+	}
+	if _, err := Load(env(map[string]string{"CAPTAIN_DOMAIN": "x.com", "SEND_GZIP": "garbage"})); err == nil || !strings.Contains(err.Error(), "SEND_GZIP") {
+		t.Fatalf("expected SEND_GZIP error, got %v", err)
 	}
 }
 

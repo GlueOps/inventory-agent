@@ -33,7 +33,17 @@ type Options struct {
 	BearerToken string
 	// Transport overrides the HTTP transport (tests). nil means default.
 	Transport http.RoundTripper
+	// Encoding is the Content-Encoding of the body handed to Send: EncodingGzip
+	// (the default when empty) sets "Content-Encoding: gzip"; EncodingIdentity
+	// sends the body as-is with no Content-Encoding header.
+	Encoding string
 }
+
+// Body encodings.
+const (
+	EncodingGzip     = "gzip"
+	EncodingIdentity = "identity"
+)
 
 // Result describes the outcome of a Send.
 type Result struct {
@@ -65,6 +75,9 @@ func New(opts Options) *Sender {
 	if opts.Retries < 0 {
 		opts.Retries = 0
 	}
+	if opts.Encoding == "" {
+		opts.Encoding = EncodingGzip
+	}
 	return &Sender{
 		opts: opts,
 		client: &http.Client{
@@ -78,15 +91,16 @@ func New(opts Options) *Sender {
 	}
 }
 
-// Send POSTs gzBody (already gzipped JSON) with Content-Type
-// application/json and Content-Encoding gzip. It retries on network errors,
-// timeouts, 429 and 5xx; any other non-2xx status (including every 3xx,
-// which is never followed) is final.
-func (s *Sender) Send(ctx context.Context, gzBody []byte) Result {
+// Send POSTs body (JSON, already gzipped unless Options.Encoding is
+// identity) with Content-Type application/json and, for gzip,
+// Content-Encoding gzip. It retries on network errors, timeouts, 429 and
+// 5xx; any other non-2xx status (including every 3xx, which is never
+// followed) is final.
+func (s *Sender) Send(ctx context.Context, body []byte) Result {
 	var res Result
 	for attempt := 1; attempt <= 1+s.opts.Retries; attempt++ {
 		res.Attempts = attempt
-		status, err := s.post(ctx, gzBody)
+		status, err := s.post(ctx, body)
 		res.HTTPStatus = status
 		res.Err = err
 		if err == nil {
@@ -113,7 +127,9 @@ func (s *Sender) post(ctx context.Context, body []byte) (int, error) {
 		return 0, errors.New("building request failed")
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Content-Encoding", "gzip")
+	if s.opts.Encoding == EncodingGzip {
+		req.Header.Set("Content-Encoding", "gzip")
+	}
 	if s.opts.UserAgent != "" {
 		req.Header.Set("User-Agent", s.opts.UserAgent)
 	}

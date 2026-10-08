@@ -36,7 +36,8 @@ All configuration is via environment variables.
 | `DEV_MODE`                       | `false`                    | Allows `http://` for `INGEST_URL` (local/k3d only).                                          |
 | `LOG_LEVEL`                      | `info`                     | `debug`, `info`, `warn` or `error`.                                                          |
 | `MAX_POD_ROWS`                   | `5000`                     | Row cap for `pod_images`; beyond it the section is cut and `truncated: true`.                |
-| `MAX_GZIP_BYTES`                 | `2097152`                  | Size cap for the gzipped snapshot; `pod_images` rows are dropped until it fits.              |
+| `SEND_GZIP`                      | `true`                     | `false` sends plain JSON with no `Content-Encoding` (for a trial receiver that cannot gunzip). |
+| `MAX_GZIP_BYTES`                 | `2097152`                  | Size cap for the body as sent (gzipped, or plain JSON when `SEND_GZIP=false`); `pod_images` rows are dropped until it fits. |
 | `HTTP_TIMEOUT`                   | `10s`                      | Per-attempt timeout for the POST.                                                            |
 | `RETRIES`                        | `2`                        | Extra attempts after the first POST (network errors, 429 and 5xx only).                      |
 | `KUBECONFIG`                     | `~/.kube/config`           | Used only when not running in-cluster.                                                       |
@@ -59,8 +60,8 @@ millisecond precision (`2026-10-01T05:00:00.123Z`).
 The full schema is [`schema/payload.schema.json`](schema/payload.schema.json).
 A sample envelope lives in `internal/schema/schema_test.go` (`SampleEnvelope`).
 
-Headers sent: `Content-Type: application/json`, `Content-Encoding: gzip`,
-`User-Agent: inventory-agent/<version>`.
+Headers sent: `Content-Type: application/json`, `Content-Encoding: gzip`
+(omitted when `SEND_GZIP=false`), `User-Agent: inventory-agent/<version>`.
 
 ## Logging
 

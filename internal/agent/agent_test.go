@@ -90,6 +90,7 @@ func baseConfig() config.Config {
 		MaxGzipBytes:  2 << 20,
 		HTTPTimeout:   time.Second,
 		Retries:       1,
+		SendGzip:      true,
 	}
 }
 
@@ -134,7 +135,7 @@ func TestRunHappyPath(t *testing.T) {
 	if env.Datasets.Cluster.Status != "ok" || env.Datasets.HelmReleases.Status != "ok" || env.Datasets.PodImages.Status != "ok" || len(env.Datasets.PodImages.Data) != 1 {
 		t.Fatalf("unexpected sections: %+v", env.Datasets)
 	}
-	if !strings.Contains(logs, `"msg":"run summary"`) || !strings.Contains(logs, `"status":"ok"`) || !strings.Contains(logs, `"section_helm_releases":"ok"`) {
+	if !strings.Contains(logs, `"msg":"run summary"`) || !strings.Contains(logs, `"status":"ok"`) || !strings.Contains(logs, `"section_helm_releases":"ok"`) || !strings.Contains(logs, `"gzip":true`) {
 		t.Fatalf("summary line missing or wrong:\n%s", logs)
 	}
 	if strings.Count(logs, `"msg":"run summary"`) != 1 {
@@ -257,6 +258,32 @@ func TestRunNoEndpointDoesNotCollectOrSend(t *testing.T) {
 	}
 	if !strings.Contains(logs, `"reason":"no_endpoint_configured"`) {
 		t.Fatalf("expected no_endpoint_configured:\n%s", logs)
+	}
+}
+
+func TestRunWithoutGzipSendsPlainJSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, present := r.Header["Content-Encoding"]; present {
+			t.Errorf("unexpected Content-Encoding %q", r.Header.Get("Content-Encoding"))
+		}
+		var env schema.Envelope
+		if err := json.NewDecoder(r.Body).Decode(&env); err != nil || env.CaptainDomain == "" {
+			t.Errorf("body is not envelope JSON: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	cfg := baseConfig()
+	cfg.IngestURL = srv.URL
+	cfg.DevMode = true
+	cfg.SendGzip = false
+	var logs bytes.Buffer
+	code, summary := Run(context.Background(), cfg, Deps{Client: fixtureClient(), Version: "t"}, logging.New("info", &logs))
+	if code != 0 || summary.Status != StatusOK || summary.Gzip {
+		t.Fatalf("unexpected: code=%d summary=%+v", code, summary)
+	}
+	if !strings.Contains(logs.String(), `"gzip":false`) {
+		t.Fatalf("summary must report gzip mode:\n%s", logs.String())
 	}
 }
 

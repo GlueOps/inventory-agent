@@ -287,7 +287,7 @@ func sampleEnvelope(rows int) *schema.Envelope {
 
 func TestPackWithinCap(t *testing.T) {
 	env := sampleEnvelope(10)
-	body, dropped, err := Pack(env, 1<<20)
+	body, dropped, err := Pack(env, PackOptions{MaxBytes: 1 << 20, Gzip: true})
 	if err != nil || dropped != 0 || env.Datasets.PodImages.Truncated || len(env.Datasets.PodImages.Data) != 10 {
 		t.Fatalf("unexpected: dropped=%d err=%v env=%+v", dropped, err, env.Datasets.PodImages)
 	}
@@ -306,12 +306,12 @@ func TestPackWithinCap(t *testing.T) {
 
 func TestPackTruncatesToSizeCap(t *testing.T) {
 	env := sampleEnvelope(2000)
-	full, _, err := Pack(sampleEnvelope(2000), 0)
+	full, _, err := Pack(sampleEnvelope(2000), PackOptions{Gzip: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	cap := len(full) / 3
-	body, dropped, err := Pack(env, cap)
+	body, dropped, err := Pack(env, PackOptions{MaxBytes: cap, Gzip: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -328,8 +328,68 @@ func TestPackTruncatesToSizeCap(t *testing.T) {
 
 func TestPackWithZeroRowsStillTooLargeReturnsBody(t *testing.T) {
 	env := sampleEnvelope(0)
-	body, dropped, err := Pack(env, 10)
+	body, dropped, err := Pack(env, PackOptions{MaxBytes: 10, Gzip: true})
 	if err != nil || dropped != 0 || len(body) == 0 || env.Datasets.PodImages.Truncated {
 		t.Fatalf("unexpected: dropped=%d err=%v len=%d", dropped, err, len(body))
+	}
+}
+
+func TestPackWithoutGzipReturnsPlainJSONAndRespectsCap(t *testing.T) {
+	env := sampleEnvelope(50)
+	body, dropped, err := Pack(env, PackOptions{MaxBytes: 1 << 20, Gzip: false})
+	if err != nil || dropped != 0 {
+		t.Fatalf("unexpected: dropped=%d err=%v", dropped, err)
+	}
+	if _, gzErr := gzip.NewReader(bytes.NewReader(body)); gzErr == nil {
+		t.Fatal("body must not be gzipped")
+	}
+	var back schema.Envelope
+	if err := json.Unmarshal(body, &back); err != nil {
+		t.Fatalf("body is not plain JSON: %v", err)
+	}
+	if back.RunID != env.RunID || len(back.Datasets.PodImages.Data) != 50 {
+		t.Fatalf("round trip mismatch: %+v", back)
+	}
+
+	// The cap applies to the uncompressed bytes.
+	env = sampleEnvelope(500)
+	full, _, _ := Pack(sampleEnvelope(500), PackOptions{Gzip: false})
+	cap := len(full) / 2
+	body, dropped, err = Pack(env, PackOptions{MaxBytes: cap, Gzip: false})
+	if err != nil || len(body) > cap || dropped == 0 || !env.Datasets.PodImages.Truncated {
+		t.Fatalf("cap not applied to plain body: len=%d cap=%d dropped=%d truncated=%v err=%v",
+			len(body), cap, dropped, env.Datasets.PodImages.Truncated, err)
+	}
+	if err := json.Unmarshal(body, &back); err != nil || !back.Datasets.PodImages.Truncated {
+		t.Fatalf("truncated plain body must still be valid JSON: %v", err)
+	}
+}
+
+func TestSendWithoutGzipSendsPlainJSONAndNoContentEncoding(t *testing.T) {
+	var got capture
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got.headers = r.Header.Clone()
+		got.body, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	body, _, err := Pack(sampleEnvelope(3), PackOptions{Gzip: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := New(Options{URL: srv.URL, Encoding: EncodingIdentity}).Send(context.Background(), body)
+	if !res.OK() {
+		t.Fatalf("unexpected result: %+v", res)
+	}
+	if _, present := got.headers["Content-Encoding"]; present {
+		t.Fatalf("Content-Encoding must be absent, got %q", got.headers.Get("Content-Encoding"))
+	}
+	if got.headers.Get("Content-Type") != "application/json" {
+		t.Fatalf("unexpected content type %q", got.headers.Get("Content-Type"))
+	}
+	var back schema.Envelope
+	if err := json.Unmarshal(got.body, &back); err != nil || len(back.Datasets.PodImages.Data) != 3 {
+		t.Fatalf("server did not receive valid envelope JSON: %v", err)
 	}
 }

@@ -9,18 +9,27 @@ import (
 	"github.com/glueops/inventory-agent/internal/schema"
 )
 
-// Pack marshals and gzips the envelope. If the gzipped body exceeds
-// maxGzipBytes, pod_images rows are dropped from the end until it fits and
-// the section is marked truncated. The returned dropped count is the number
-// of rows removed. If the body is still too large with zero rows, it is
-// returned as-is (the caller logs a warning); nothing else is ever cut.
-func Pack(env *schema.Envelope, maxGzipBytes int) (body []byte, dropped int, err error) {
+// PackOptions control how the envelope is encoded.
+type PackOptions struct {
+	// MaxBytes caps the encoded body as it will be sent (gzipped or plain).
+	// Zero or negative means no cap.
+	MaxBytes int
+	// Gzip compresses the body; false yields plain JSON.
+	Gzip bool
+}
+
+// Pack marshals (and, when opts.Gzip, gzips) the envelope. If the encoded
+// body exceeds opts.MaxBytes, pod_images rows are dropped from the end until
+// it fits and the section is marked truncated. The returned dropped count is
+// the number of rows removed. If the body is still too large with zero rows,
+// it is returned as-is (the caller logs a warning); nothing else is ever cut.
+func Pack(env *schema.Envelope, opts PackOptions) (body []byte, dropped int, err error) {
 	for {
-		body, err = encode(env)
+		body, err = encode(env, opts.Gzip)
 		if err != nil {
 			return nil, dropped, err
 		}
-		if maxGzipBytes <= 0 || len(body) <= maxGzipBytes {
+		if opts.MaxBytes <= 0 || len(body) <= opts.MaxBytes {
 			return body, dropped, nil
 		}
 		rows := env.Datasets.PodImages.Data
@@ -28,7 +37,7 @@ func Pack(env *schema.Envelope, maxGzipBytes int) (body []byte, dropped int, err
 			return body, dropped, nil
 		}
 		// Shrink proportionally with a 10% margin, always by at least one row.
-		keep := int(float64(len(rows)) * float64(maxGzipBytes) / float64(len(body)) * 0.9)
+		keep := int(float64(len(rows)) * float64(opts.MaxBytes) / float64(len(body)) * 0.9)
 		if keep >= len(rows) {
 			keep = len(rows) - 1
 		}
@@ -41,10 +50,13 @@ func Pack(env *schema.Envelope, maxGzipBytes int) (body []byte, dropped int, err
 	}
 }
 
-func encode(env *schema.Envelope) ([]byte, error) {
+func encode(env *schema.Envelope, gz bool) ([]byte, error) {
 	raw, err := json.Marshal(env)
 	if err != nil {
 		return nil, fmt.Errorf("marshal envelope: %w", err)
+	}
+	if !gz {
+		return raw, nil
 	}
 	var buf bytes.Buffer
 	zw, err := gzip.NewWriterLevel(&buf, gzip.BestCompression)
