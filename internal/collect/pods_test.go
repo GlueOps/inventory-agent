@@ -197,6 +197,30 @@ func TestPodImagesPartialDenialStaysOK(t *testing.T) {
 	}
 }
 
+func TestPodImagesAllNamespacesDeniedIsRBACError(t *testing.T) {
+	client := podsClient(k3dAndEKSPods()...)
+	client.PrependReactor("list", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "pods"}, "", errors.New("denied"))
+	})
+	log, logs := testLogger()
+	requested := []string{"kube-system", "glueops-core"}
+	section := PodImages(context.Background(), client, PodImagesParams{Namespaces: requested, MaxRows: 5000}, log)
+	if section.Status != payload.StatusError || section.Error != payload.ErrRBACDenied || section.Data != nil {
+		t.Fatalf("expected error/rbac_denied with null data, got %+v", section)
+	}
+	if !reflect.DeepEqual(section.NamespacesDenied, requested) || !reflect.DeepEqual(section.NamespacesRequested, requested) {
+		t.Fatalf("namespace lists must be kept: %+v", section)
+	}
+	raw, _ := json.Marshal(section)
+	want := `{"schema_version":1,"status":"error","error":"rbac_denied","namespaces_requested":["kube-system","glueops-core"],"namespaces_denied":["kube-system","glueops-core"],"truncated":false,"data":null}`
+	if string(raw) != want {
+		t.Fatalf("unexpected wire form:\n%s", raw)
+	}
+	if !strings.Contains(logs.String(), `"reason":"rbac_denied"`) {
+		t.Fatal("expected rbac_denied in logs")
+	}
+}
+
 // pagingLister serves pods in fixed-size pages with Continue tokens and
 // records every call so the test can assert Limit/Continue handling.
 type pagingLister struct {

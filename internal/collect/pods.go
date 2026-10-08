@@ -39,7 +39,8 @@ type podLister func(ctx context.Context, namespace string, opts metav1.ListOptio
 
 // PodImages lists pods in each configured namespace and emits one row per
 // container (init and app; ephemeral containers are excluded). A namespace
-// the agent may not read (403) is recorded in namespaces_denied; a
+// the agent may not read (403) is recorded in namespaces_denied and the
+// section stays ok unless every namespace was denied (then rbac_denied); a
 // namespace that does not exist simply lists as empty (the API returns 200),
 // and any other list error fails the section. Rows beyond MaxRows are cut,
 // truncated is set and no further pages are fetched.
@@ -94,6 +95,17 @@ namespaces:
 			}
 			opts.Continue = page.Continue
 		}
+	}
+
+	// Partial denial is still a usable snapshot; being refused everywhere
+	// is an RBAC failure of the section, with the denied list kept so the
+	// receiver can see which namespaces were attempted.
+	if len(p.Namespaces) > 0 && len(section.NamespacesDenied) == len(p.Namespaces) {
+		section.Status = schema.StatusError
+		section.Error = schema.ErrRBACDenied
+		section.Data = nil
+		log.Warn("section failed", "section", "pod_images", "reason", schema.ErrRBACDenied, "error", "every requested namespace was denied")
+		return section
 	}
 
 	if truncated {
