@@ -180,7 +180,15 @@ func ValidateIngestURL(raw string, devMode bool) error {
 // "aglueops-corez". The error names the syntax problem but never echoes the
 // pattern, in line with Load's contract.
 func CompileNamespacePattern(pattern string) (*regexp.Regexp, error) {
-	re, err := regexp.Compile("^(?:" + pattern + ")$")
+	// Compile the raw pattern first. Anchoring is done by pasting text around it,
+	// so an unbalanced ")" could otherwise close the wrapper group early and escape
+	// the anchors: `kube-system)|(?:.*` would become `^(?:kube-system)|(?:.*)$`,
+	// which matches every namespace. A pattern that compiles on its own has
+	// balanced groups, so the wrapper always encloses all of it.
+	re, err := regexp.Compile(pattern)
+	if err == nil {
+		re, err = regexp.Compile("^(?:" + pattern + ")$")
+	}
 	if err != nil {
 		var se *syntax.Error
 		if errors.As(err, &se) {

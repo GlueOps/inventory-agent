@@ -166,6 +166,48 @@ func TestCompileNamespacePattern(t *testing.T) {
 	}
 }
 
+// A pattern with an unbalanced ")" must not close the anchoring group early.
+// Pasted into ^(?:...)$ each of these compiles and matches every namespace,
+// tenant ones included; they must be rejected as invalid instead.
+func TestCompileNamespacePatternCannotEscapeAnchors(t *testing.T) {
+	for _, pattern := range []string{
+		`kube-system)|(?:.*`,
+		`kube-system)|(.*`,
+		`a)|.*|(b`,
+	} {
+		re, err := CompileNamespacePattern(pattern)
+		if err == nil {
+			t.Errorf("%s: accepted, compiled to %s (matches nonprod=%v)", pattern, re, re.MatchString("nonprod"))
+			continue
+		}
+		if strings.Contains(err.Error(), pattern) || !strings.Contains(err.Error(), "regular expression") {
+			t.Errorf("%s: unexpected error text %q", pattern, err)
+		}
+	}
+
+	// Constructs that look like they could escape but cannot: they either stay
+	// inside the group or fail to compile.
+	for pattern, cases := range map[string]map[string]bool{
+		`(?i)KUBE-SYSTEM`:      {"kube-system": true, "nonprod": false},
+		`[)]|kube-system`:      {"kube-system": true, ")": true, "nonprod": false},
+		`kube-system\)`:        {"kube-system)": true, "kube-system": false, "nonprod": false},
+		`kube-system|\Q)|.*\E`: {"kube-system": true, ")|.*": true, "nonprod": false},
+	} {
+		re, err := CompileNamespacePattern(pattern)
+		if err != nil {
+			t.Fatalf("%s: %v", pattern, err)
+		}
+		for name, want := range cases {
+			if got := re.MatchString(name); got != want {
+				t.Errorf("%s: %q matched=%v, want %v", pattern, name, got, want)
+			}
+		}
+	}
+	if _, err := CompileNamespacePattern(`kube-system|\Q`); err == nil {
+		t.Error(`kube-system|\Q: an unterminated \Q quotes the wrapper's closing group and must be rejected`)
+	}
+}
+
 // withUserinfo attaches canary credentials at runtime so the source never
 // contains a credential-bearing URL literal.
 func withUserinfo(base string, withPassword bool) string {
