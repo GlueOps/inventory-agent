@@ -20,8 +20,8 @@ func TestLoadDefaults(t *testing.T) {
 		cfg.HTTPTimeout != 10*time.Second || cfg.Retries != 2 || cfg.DevMode || !cfg.SendGzip || cfg.LogLevel != "info" {
 		t.Fatalf("unexpected defaults: %+v", cfg)
 	}
-	if len(cfg.PodNamespaces) != 2 || cfg.PodNamespaces[0] != "kube-system" {
-		t.Fatalf("unexpected namespaces: %v", cfg.PodNamespaces)
+	if got := cfg.NamespacePattern.String(); got != "^(?:kube-system|glueops-core(-.*)?)$" {
+		t.Fatalf("unexpected default namespace pattern: %q", got)
 	}
 }
 
@@ -29,7 +29,7 @@ func TestLoadParsesEverything(t *testing.T) {
 	cfg, err := Load(env(map[string]string{
 		"CAPTAIN_DOMAIN":                 "nonprod.foo.onglueops.com",
 		"INGEST_URL":                     "https://ingest.example.com/v1",
-		"POD_NAMESPACES":                 " kube-system, glueops-core ,glueops-core, ,glueops-core-argocd-extension-backend",
+		"NAMESPACE_PATTERN":              " glueops-core-(argocd|vault).* ",
 		"HELM_NAMESPACE":                 "other",
 		"GLUEOPS_PLATFORM_CHART_VERSION": "0.80.2",
 		"DEV_MODE":                       "true",
@@ -42,8 +42,8 @@ func TestLoadParsesEverything(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(cfg.PodNamespaces, ","); got != "kube-system,glueops-core,glueops-core-argocd-extension-backend" {
-		t.Fatalf("namespaces not trimmed/deduped: %q", got)
+	if got := cfg.NamespacePattern.String(); got != "^(?:glueops-core-(argocd|vault).*)$" {
+		t.Fatalf("namespace pattern not trimmed/anchored: %q", got)
 	}
 	if cfg.HelmNamespace != "other" || cfg.PlatformChartVersion != "0.80.2" || !cfg.DevMode || cfg.LogLevel != "debug" ||
 		cfg.MaxPodRows != 10 || cfg.MaxGzipBytes != 1024 || cfg.HTTPTimeout != 3*time.Second || cfg.Retries != 1 {
@@ -61,6 +61,7 @@ func TestLoadRejectsBadValues(t *testing.T) {
 		"bad bytes":              {"CAPTAIN_DOMAIN": "x.com", "MAX_GZIP_BYTES": "lots"},
 		"bad timeout":            {"CAPTAIN_DOMAIN": "x.com", "HTTP_TIMEOUT": "-1s"},
 		"bad retries":            {"CAPTAIN_DOMAIN": "x.com", "RETRIES": "99"},
+		"bad ns pattern":         {"CAPTAIN_DOMAIN": "x.com", "NAMESPACE_PATTERN": "glueops-core("},
 	}
 	for name, m := range cases {
 		if _, err := Load(env(m)); err == nil {
@@ -86,23 +87,82 @@ func TestLoadUnsetVersusEmptyNamespaces(t *testing.T) {
 
 	// Unset: defaults apply.
 	cfg, err := Load(env(base))
-	if err != nil || cfg.HelmNamespace != DefaultHelmNamespace || len(cfg.PodNamespaces) != 2 {
+	if err != nil || cfg.HelmNamespace != DefaultHelmNamespace || cfg.NamespacePattern == nil || !cfg.NamespacePattern.MatchString("kube-system") {
 		t.Fatalf("unset should default: %+v %v", cfg, err)
 	}
 
 	// Set but empty (or effectively empty): invalid_config.
 	for name, m := range map[string]map[string]string{
-		"POD_NAMESPACES empty":       {"CAPTAIN_DOMAIN": "x.com", "POD_NAMESPACES": ""},
-		"POD_NAMESPACES whitespace":  {"CAPTAIN_DOMAIN": "x.com", "POD_NAMESPACES": "   "},
-		"POD_NAMESPACES only commas": {"CAPTAIN_DOMAIN": "x.com", "POD_NAMESPACES": ", ,,"},
-		"HELM_NAMESPACE empty":       {"CAPTAIN_DOMAIN": "x.com", "HELM_NAMESPACE": ""},
-		"HELM_NAMESPACE whitespace":  {"CAPTAIN_DOMAIN": "x.com", "HELM_NAMESPACE": " \t"},
+		"NAMESPACE_PATTERN empty":      {"CAPTAIN_DOMAIN": "x.com", "NAMESPACE_PATTERN": ""},
+		"NAMESPACE_PATTERN whitespace": {"CAPTAIN_DOMAIN": "x.com", "NAMESPACE_PATTERN": "   "},
+		"HELM_NAMESPACE empty":         {"CAPTAIN_DOMAIN": "x.com", "HELM_NAMESPACE": ""},
+		"HELM_NAMESPACE whitespace":    {"CAPTAIN_DOMAIN": "x.com", "HELM_NAMESPACE": " \t"},
 	} {
 		if _, err := Load(env(m)); err == nil {
 			t.Errorf("%s: expected invalid_config error", name)
 		} else if !strings.Contains(err.Error(), "is set but") {
 			t.Errorf("%s: unexpected error text %q", name, err)
 		}
+	}
+}
+
+func TestCompileNamespacePattern(t *testing.T) {
+	// The default: kube-system and glueops-core*, whole-name only.
+	def, err := CompileNamespacePattern(DefaultNamespacePattern)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]bool{
+		"kube-system":              true,
+		"glueops-core":             true,
+		"glueops-core-monitoring":  true,
+		"glueops-core-vault-extra": true,
+		"glueops-corex":            false,
+		"nonprod":                  false,
+		"chisel-operator-system":   false,
+		"default":                  false,
+		"kube-public":              false,
+		"aglueops-core":            false,
+		"":                         false,
+	} {
+		if got := def.MatchString(name); got != want {
+			t.Errorf("default pattern: %q matched=%v, want %v", name, got, want)
+		}
+	}
+
+	// An unanchored user pattern is anchored by the agent, so it never
+	// matches a longer name that merely contains it.
+	user, err := CompileNamespacePattern("glueops-core")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !user.MatchString("glueops-core") || user.MatchString("aglueops-corez") || user.MatchString("glueops-core-monitoring") {
+		t.Fatalf("user pattern must be anchored: %s", user)
+	}
+
+	// A pattern the user already anchored behaves identically, and a
+	// partially anchored alternation still cannot match a longer name.
+	for pattern, cases := range map[string]map[string]bool{
+		"^kube-system$":         {"kube-system": true, "xkube-system": false, "kube-systemx": false},
+		"^kube-system|default$": {"kube-system": true, "default": true, "xdefault": false, "kube-systemx": false},
+	} {
+		re, err := CompileNamespacePattern(pattern)
+		if err != nil {
+			t.Fatalf("%s: %v", pattern, err)
+		}
+		for name, want := range cases {
+			if got := re.MatchString(name); got != want {
+				t.Errorf("%s: %q matched=%v, want %v", pattern, name, got, want)
+			}
+		}
+	}
+
+	// Invalid syntax is an error that names the problem without echoing
+	// the pattern.
+	if _, err := CompileNamespacePattern("glueops-core-CANARY_PATTERN_TEXT("); err == nil {
+		t.Fatal("expected an error for an unbalanced parenthesis")
+	} else if strings.Contains(err.Error(), "CANARY_PATTERN_TEXT") || !strings.Contains(err.Error(), "regular expression") {
+		t.Fatalf("unexpected error text %q", err)
 	}
 }
 

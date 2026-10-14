@@ -3,6 +3,7 @@ package collect
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +20,9 @@ import (
 func TestEnvelopeAssemblesAllSections(t *testing.T) {
 	objs := []runtime.Object{
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "kube-system", UID: types.UID("uid-123")}},
+		namespaceObj("glueops-core"),
+		namespaceObj("nonprod"),
+		tenantPod("nonprod", "tenant-app-abcde"),
 		node("n1"),
 		helmSecret(t, "glueops-core", "argocd", 1, helmReleaseJSON("argocd", "glueops-core", 1, "deployed", "argo-cd", "10.2.2", "v3.4.6",
 			"2026-09-29T15:53:59.278Z", "2026-09-29T15:53:59.278Z")),
@@ -34,7 +38,7 @@ func TestEnvelopeAssemblesAllSections(t *testing.T) {
 	env, stats := Envelope(context.Background(), client, Params{
 		CaptainDomain: "nonprod.foobar.onglueops.com", PlatformChartVersion: "0.80.2", CollectorVersion: "v0.1.0",
 		RunID: "20261001050000_3f9c2a7e", HelmNamespace: "glueops-core",
-		PodNamespaces: []string{"kube-system", "glueops-core"}, MaxPodRows: 5000,
+		NamespacePattern: defaultPattern, MaxPodRows: 5000,
 	}, now, log)
 
 	if env.SchemaVersion != 1 || env.CaptainDomain != "nonprod.foobar.onglueops.com" || *env.ClusterUID != "uid-123" ||
@@ -48,6 +52,9 @@ func TestEnvelopeAssemblesAllSections(t *testing.T) {
 	if stats.HelmDecodeFailed != 0 {
 		t.Fatalf("unexpected stats: %+v", stats)
 	}
+	if got := env.Datasets.PodImages.NamespacesRequested; !reflect.DeepEqual(got, []string{"glueops-core", "kube-system"}) {
+		t.Fatalf("expected only the matched namespaces, got %v", got)
+	}
 	raw, _ := json.Marshal(env)
 	assertNoMarkers(t, "envelope", string(raw))
 	assertNoMarkers(t, "logs", logs.String())
@@ -55,7 +62,7 @@ func TestEnvelopeAssemblesAllSections(t *testing.T) {
 
 func TestEnvelopeWithNilClient(t *testing.T) {
 	log, logs := testLogger()
-	env, _ := Envelope(context.Background(), nil, Params{CaptainDomain: "x", PodNamespaces: []string{"kube-system"}}, time.Now(), log)
+	env, _ := Envelope(context.Background(), nil, Params{CaptainDomain: "x", NamespacePattern: defaultPattern}, time.Now(), log)
 	if env.ClusterUID != nil {
 		t.Fatal("expected nil cluster_uid")
 	}
@@ -79,7 +86,7 @@ func TestEnvelopeSectionPanicIsIsolated(t *testing.T) {
 		panic("boom in secrets")
 	})
 	log, logs := testLogger()
-	env, _ := Envelope(context.Background(), client, Params{CaptainDomain: "x", HelmNamespace: "glueops-core", PodNamespaces: []string{"kube-system"}, MaxPodRows: 10}, time.Now(), log)
+	env, _ := Envelope(context.Background(), client, Params{CaptainDomain: "x", HelmNamespace: "glueops-core", NamespacePattern: defaultPattern, MaxPodRows: 10}, time.Now(), log)
 	if env.Datasets.HelmReleases.Status != payload.StatusError || env.Datasets.HelmReleases.Error != payload.ErrInternal {
 		t.Fatalf("expected internal_error for helm, got %+v", env.Datasets.HelmReleases)
 	}

@@ -6,6 +6,7 @@ package collect
 import (
 	"context"
 	"log/slog"
+	"regexp"
 	"time"
 
 	"k8s.io/client-go/kubernetes"
@@ -21,8 +22,10 @@ type Params struct {
 	CollectorVersion     string
 	RunID                string
 	HelmNamespace        string
-	PodNamespaces        []string
-	MaxPodRows           int
+	// NamespacePattern selects the namespaces whose pods are listed; the
+	// namespaces themselves are discovered at collection time.
+	NamespacePattern *regexp.Regexp
+	MaxPodRows       int
 }
 
 // Stats are run-level counters that are logged but not part of the payload.
@@ -66,13 +69,15 @@ func Envelope(ctx context.Context, client kubernetes.Interface, p Params, now ti
 	})
 
 	env.Datasets.PodImages = guard(log, "pod_images", func() schema.PodImagesSection {
-		return PodImages(ctx, client, PodImagesParams{Namespaces: p.PodNamespaces, MaxRows: p.MaxPodRows}, log)
+		return PodImages(ctx, client, PodImagesParams{NamespacePattern: p.NamespacePattern, MaxRows: p.MaxPodRows}, log)
 	}, func(code string) schema.PodImagesSection {
+		// The matched namespaces are only known once discovery succeeded,
+		// so a panicking section reports none.
 		return schema.PodImagesSection{
 			SchemaVersion:       schema.PodImagesSchemaVersion,
 			Status:              schema.StatusError,
 			Error:               code,
-			NamespacesRequested: append([]string{}, p.PodNamespaces...),
+			NamespacesRequested: []string{},
 			NamespacesDenied:    []string{},
 		}
 	})

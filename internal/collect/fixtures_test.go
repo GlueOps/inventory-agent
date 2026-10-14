@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strconv"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/glueops/inventory-agent/internal/config"
 	"github.com/glueops/inventory-agent/internal/logging"
 )
 
@@ -28,11 +30,38 @@ const (
 	markerPodEnv      = "CANARY_POD_ENV_VALUE"
 	markerPodArgs     = "CANARY_POD_ARGS_VALUE"
 	markerOtherSecret = "CANARY_ARGOCD_ADMIN_VALUE"
+	// markerTenantEnv is planted only in pods of namespaces that must never
+	// be listed at all (tenant namespaces such as "nonprod").
+	markerTenantEnv = "CANARY_TENANT_ENV_VALUE"
 )
 
 var sensitiveMarkers = []string{
 	markerValues, markerManifest, markerHooks, markerDescription,
-	markerPodEnv, markerPodArgs, markerOtherSecret,
+	markerPodEnv, markerPodArgs, markerOtherSecret, markerTenantEnv,
+}
+
+// defaultPattern is the production default, compiled exactly as Load does.
+var defaultPattern = mustNamespacePattern(config.DefaultNamespacePattern)
+
+func mustNamespacePattern(pattern string) *regexp.Regexp {
+	re, err := config.CompileNamespacePattern(pattern)
+	if err != nil {
+		panic(err)
+	}
+	return re
+}
+
+func namespaceObj(name string) *corev1.Namespace {
+	return &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name}}
+}
+
+// tenantPod is a pod in a namespace outside the pattern, carrying an env
+// value that must never be read because the namespace is never listed.
+func tenantPod(ns, name string) *corev1.Pod {
+	pod := podFixture{ns: ns, name: name, phase: "Running", node: "n",
+		owner: ownerRef("DaemonSet", "tenant"), apps: []string{"app=ghcr.io/tenant/app:1.0.0"}}.build()
+	pod.Spec.Containers[0].Env = append(pod.Spec.Containers[0].Env, corev1.EnvVar{Name: "DATABASE_URL", Value: markerTenantEnv})
+	return pod
 }
 
 func testLogger() (*slog.Logger, *bytes.Buffer) {

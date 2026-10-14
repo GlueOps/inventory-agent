@@ -113,13 +113,17 @@ type HelmRelease struct {
 // PodImagesSection lists one row per container per pod in the platform
 // namespaces.
 type PodImagesSection struct {
-	SchemaVersion       int        `json:"schema_version"`
-	Status              string     `json:"status"`
-	Error               string     `json:"error,omitempty"`
-	NamespacesRequested []string   `json:"namespaces_requested"`
-	NamespacesDenied    []string   `json:"namespaces_denied"`
-	Truncated           bool       `json:"truncated"`
-	Data                []PodImage `json:"data"`
+	SchemaVersion int    `json:"schema_version"`
+	Status        string `json:"status"`
+	Error         string `json:"error,omitempty"`
+	// NamespacesRequested are the namespaces that existed and matched
+	// NAMESPACE_PATTERN at collection time, sorted.
+	NamespacesRequested []string `json:"namespaces_requested"`
+	// NamespacesDenied is the subset of NamespacesRequested whose pods the
+	// agent was refused (403).
+	NamespacesDenied []string   `json:"namespaces_denied"`
+	Truncated        bool       `json:"truncated"`
+	Data             []PodImage `json:"data"`
 }
 
 // PodImage is one container of one pod. Nothing from the pod spec beyond

@@ -25,12 +25,13 @@ func TestRunAlwaysExitsZeroWithOneSummary(t *testing.T) {
 		env    map[string]string
 		status string
 	}{
-		"no endpoint":     {map[string]string{"CAPTAIN_DOMAIN": "nonprod.foo.onglueops.com"}, "no_endpoint_configured"},
-		"invalid config":  {map[string]string{}, "invalid_config"},
-		"placeholder":     {map[string]string{"CAPTAIN_DOMAIN": "placeholder.onglueops.com", "INGEST_URL": "https://x"}, "invalid_config"},
-		"non-https url":   {map[string]string{"CAPTAIN_DOMAIN": "nonprod.foo.onglueops.com", "INGEST_URL": "http://x"}, "invalid_ingest_url"},
-		"bad env numbers": {map[string]string{"CAPTAIN_DOMAIN": "nonprod.foo.onglueops.com", "MAX_POD_ROWS": "-1"}, "invalid_config"},
-		"empty ns list":   {map[string]string{"CAPTAIN_DOMAIN": "nonprod.foo.onglueops.com", "POD_NAMESPACES": ""}, "invalid_config"},
+		"no endpoint":      {map[string]string{"CAPTAIN_DOMAIN": "nonprod.foo.onglueops.com"}, "no_endpoint_configured"},
+		"invalid config":   {map[string]string{}, "invalid_config"},
+		"placeholder":      {map[string]string{"CAPTAIN_DOMAIN": "placeholder.onglueops.com", "INGEST_URL": "https://x"}, "invalid_config"},
+		"non-https url":    {map[string]string{"CAPTAIN_DOMAIN": "nonprod.foo.onglueops.com", "INGEST_URL": "http://x"}, "invalid_ingest_url"},
+		"bad env numbers":  {map[string]string{"CAPTAIN_DOMAIN": "nonprod.foo.onglueops.com", "MAX_POD_ROWS": "-1"}, "invalid_config"},
+		"empty ns pattern": {map[string]string{"CAPTAIN_DOMAIN": "nonprod.foo.onglueops.com", "NAMESPACE_PATTERN": ""}, "invalid_config"},
+		"bad ns pattern":   {map[string]string{"CAPTAIN_DOMAIN": "nonprod.foo.onglueops.com", "NAMESPACE_PATTERN": "glueops-core("}, "invalid_config"},
 	}
 	for name, c := range cases {
 		var out bytes.Buffer

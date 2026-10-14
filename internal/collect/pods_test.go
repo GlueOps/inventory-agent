@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -21,12 +24,29 @@ import (
 	payload "github.com/glueops/inventory-agent/internal/schema"
 )
 
+// podsClient builds a fake clientset holding the pods and a Namespace object
+// for every namespace they live in, so namespace discovery finds them.
 func podsClient(pods ...*corev1.Pod) *fake.Clientset {
-	objs := make([]runtime.Object, 0, len(pods))
+	objs := make([]runtime.Object, 0, 2*len(pods))
+	seen := map[string]bool{}
 	for _, p := range pods {
+		if !seen[p.Namespace] {
+			seen[p.Namespace] = true
+			objs = append(objs, namespaceObj(p.Namespace))
+		}
 		objs = append(objs, p)
 	}
 	return fake.NewClientset(objs...)
+}
+
+// recordPodLists returns the set of namespaces every pods list call targets.
+func recordPodLists(client *fake.Clientset) *[]string {
+	var listed []string
+	client.PrependReactor("list", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		listed = append(listed, action.GetNamespace())
+		return false, nil, nil
+	})
+	return &listed
 }
 
 type rowKey struct{ pod, container string }
@@ -49,13 +69,11 @@ func deref(s *string) string {
 func TestPodImagesOwnershipAndImages(t *testing.T) {
 	client := podsClient(k3dAndEKSPods()...)
 	log, logs := testLogger()
-	section := PodImages(context.Background(), client, PodImagesParams{
-		Namespaces: []string{"kube-system", "glueops-core"}, MaxRows: 5000,
-	}, log)
+	section := PodImages(context.Background(), client, PodImagesParams{NamespacePattern: defaultPattern, MaxRows: 5000}, log)
 	if section.Status != payload.StatusOK || section.Truncated {
 		t.Fatalf("unexpected section: %+v", section)
 	}
-	if !reflect.DeepEqual(section.NamespacesRequested, []string{"kube-system", "glueops-core"}) || len(section.NamespacesDenied) != 0 {
+	if !reflect.DeepEqual(section.NamespacesRequested, []string{"glueops-core", "kube-system"}) || len(section.NamespacesDenied) != 0 {
 		t.Fatalf("unexpected namespaces: %+v / %+v", section.NamespacesRequested, section.NamespacesDenied)
 	}
 	// 1 + 1 + 1 + 3 + 1 + 1 + 1 + 1 + 2 + 1 containers (ephemeral excluded)
@@ -158,7 +176,7 @@ func TestPodImagesTruncation(t *testing.T) {
 	}
 	client := podsClient(pods...)
 	log, _ := testLogger()
-	section := PodImages(context.Background(), client, PodImagesParams{Namespaces: []string{"glueops-core"}, MaxRows: 25}, log)
+	section := PodImages(context.Background(), client, PodImagesParams{NamespacePattern: defaultPattern, MaxRows: 25}, log)
 	if section.Status != payload.StatusOK {
 		t.Fatalf("expected ok, got %+v", section)
 	}
@@ -166,35 +184,37 @@ func TestPodImagesTruncation(t *testing.T) {
 		t.Fatalf("expected truncated=true with 25 rows, got truncated=%v rows=%d", section.Truncated, len(section.Data))
 	}
 	// Exactly at the cap is not truncation.
-	section = PodImages(context.Background(), client, PodImagesParams{Namespaces: []string{"glueops-core"}, MaxRows: 100}, log)
+	section = PodImages(context.Background(), client, PodImagesParams{NamespacePattern: defaultPattern, MaxRows: 100}, log)
 	if section.Truncated || len(section.Data) != 100 {
 		t.Fatalf("expected untruncated 100 rows, got truncated=%v rows=%d", section.Truncated, len(section.Data))
 	}
 }
 
 func TestPodImagesPartialDenialStaysOK(t *testing.T) {
-	client := podsClient(k3dAndEKSPods()...)
+	client := podsClient(append(k3dAndEKSPods(), tenantPod("glueops-core-denied", "hidden-abcde"))...)
 	client.PrependReactor("list", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
 		if action.GetNamespace() == "glueops-core-denied" {
 			return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "pods"}, "", errors.New("denied"))
 		}
 		return false, nil, nil
 	})
-	log, _ := testLogger()
-	section := PodImages(context.Background(), client, PodImagesParams{
-		Namespaces: []string{"kube-system", "glueops-core-denied", "glueops-core-does-not-exist", "glueops-core"}, MaxRows: 5000,
-	}, log)
+	log, logs := testLogger()
+	section := PodImages(context.Background(), client, PodImagesParams{NamespacePattern: defaultPattern, MaxRows: 5000}, log)
 	if section.Status != payload.StatusOK {
 		t.Fatalf("expected ok, got %+v", section)
 	}
-	// Only RBAC refusals are "denied"; a namespace that does not exist lists
-	// as empty and is not recorded anywhere.
+	if !reflect.DeepEqual(section.NamespacesRequested, []string{"glueops-core", "glueops-core-denied", "kube-system"}) {
+		t.Fatalf("unexpected requested: %v", section.NamespacesRequested)
+	}
 	if !reflect.DeepEqual(section.NamespacesDenied, []string{"glueops-core-denied"}) {
 		t.Fatalf("unexpected denied: %v", section.NamespacesDenied)
 	}
 	if len(section.Data) != 13 {
 		t.Fatalf("expected rows from readable namespaces, got %d", len(section.Data))
 	}
+	raw, _ := json.Marshal(section)
+	assertNoMarkers(t, "pod_images payload", string(raw))
+	assertNoMarkers(t, "logs", logs.String())
 }
 
 func TestPodImagesAllNamespacesDeniedIsRBACError(t *testing.T) {
@@ -203,8 +223,8 @@ func TestPodImagesAllNamespacesDeniedIsRBACError(t *testing.T) {
 		return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "pods"}, "", errors.New("denied"))
 	})
 	log, logs := testLogger()
-	requested := []string{"kube-system", "glueops-core"}
-	section := PodImages(context.Background(), client, PodImagesParams{Namespaces: requested, MaxRows: 5000}, log)
+	requested := []string{"glueops-core", "kube-system"}
+	section := PodImages(context.Background(), client, PodImagesParams{NamespacePattern: defaultPattern, MaxRows: 5000}, log)
 	if section.Status != payload.StatusError || section.Error != payload.ErrRBACDenied || section.Data != nil {
 		t.Fatalf("expected error/rbac_denied with null data, got %+v", section)
 	}
@@ -212,7 +232,7 @@ func TestPodImagesAllNamespacesDeniedIsRBACError(t *testing.T) {
 		t.Fatalf("namespace lists must be kept: %+v", section)
 	}
 	raw, _ := json.Marshal(section)
-	want := `{"schema_version":1,"status":"error","error":"rbac_denied","namespaces_requested":["kube-system","glueops-core"],"namespaces_denied":["kube-system","glueops-core"],"truncated":false,"data":null}`
+	want := `{"schema_version":1,"status":"error","error":"rbac_denied","namespaces_requested":["glueops-core","kube-system"],"namespaces_denied":["glueops-core","kube-system"],"truncated":false,"data":null}`
 	if string(raw) != want {
 		t.Fatalf("unexpected wire form:\n%s", raw)
 	}
@@ -262,7 +282,7 @@ func makePods(ns string, n int) []corev1.Pod {
 func TestPodImagesPaginatesWithContinue(t *testing.T) {
 	l := &pagingLister{pageSize: 3, pods: map[string][]corev1.Pod{"a": makePods("a", 7), "b": makePods("b", 2)}}
 	log, _ := testLogger()
-	section := collectPodImages(context.Background(), l.list, PodImagesParams{Namespaces: []string{"a", "b"}, MaxRows: 5000}, log)
+	section := collectPodImages(context.Background(), l.list, []string{"a", "b"}, 5000, log)
 	if section.Status != payload.StatusOK || section.Truncated || len(section.Data) != 9 {
 		t.Fatalf("expected 9 rows across pages, got %+v (rows=%d)", section, len(section.Data))
 	}
@@ -287,7 +307,7 @@ func TestPodImagesPaginatesWithContinue(t *testing.T) {
 func TestPodImagesStopsPagingAtRowCap(t *testing.T) {
 	l := &pagingLister{pageSize: 3, pods: map[string][]corev1.Pod{"a": makePods("a", 30), "b": makePods("b", 30)}}
 	log, _ := testLogger()
-	section := collectPodImages(context.Background(), l.list, PodImagesParams{Namespaces: []string{"a", "b"}, MaxRows: 4}, log)
+	section := collectPodImages(context.Background(), l.list, []string{"a", "b"}, 4, log)
 	if !section.Truncated || len(section.Data) != 4 {
 		t.Fatalf("expected truncated at 4 rows, got truncated=%v rows=%d", section.Truncated, len(section.Data))
 	}
@@ -298,12 +318,12 @@ func TestPodImagesStopsPagingAtRowCap(t *testing.T) {
 }
 
 func TestPodImagesAPIUnavailableFailsSection(t *testing.T) {
-	client := podsClient()
+	client := fake.NewClientset(namespaceObj("kube-system"))
 	client.PrependReactor("list", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
 		return true, nil, apierrors.NewServiceUnavailable("etcd down")
 	})
 	log, _ := testLogger()
-	section := PodImages(context.Background(), client, PodImagesParams{Namespaces: []string{"kube-system"}, MaxRows: 10}, log)
+	section := PodImages(context.Background(), client, PodImagesParams{NamespacePattern: defaultPattern, MaxRows: 10}, log)
 	if section.Status != payload.StatusError || section.Error != payload.ErrAPIUnavailable || section.Data != nil {
 		t.Fatalf("expected api_unavailable, got %+v", section)
 	}
@@ -314,14 +334,138 @@ func TestPodImagesAPIUnavailableFailsSection(t *testing.T) {
 	}
 }
 
-func TestPodImagesEmptyNamespaceIsOK(t *testing.T) {
-	client := podsClient()
-	log, _ := testLogger()
-	section := PodImages(context.Background(), client, PodImagesParams{Namespaces: []string{"kube-system"}, MaxRows: 10}, log)
+// TestPodImagesOnlyKubeSystemExists is the k3d/fresh-cluster case: nothing
+// but kube-system matches, which is an ordinary ok section with no rows and
+// nothing to warn about.
+func TestPodImagesOnlyKubeSystemExists(t *testing.T) {
+	client := fake.NewClientset(namespaceObj("kube-system"), namespaceObj("default"), namespaceObj("kube-public"))
+	listed := recordPodLists(client)
+	log, logs := testLogger()
+	section := PodImages(context.Background(), client, PodImagesParams{NamespacePattern: defaultPattern, MaxRows: 10}, log)
 	raw, _ := json.Marshal(section)
 	want := `{"schema_version":1,"status":"ok","namespaces_requested":["kube-system"],"namespaces_denied":[],"truncated":false,"data":[]}`
 	if string(raw) != want {
 		t.Fatalf("unexpected wire form:\n%s", raw)
+	}
+	if !reflect.DeepEqual(*listed, []string{"kube-system"}) {
+		t.Fatalf("expected a single pods list in kube-system, got %v", *listed)
+	}
+	if strings.Contains(logs.String(), `"level":"WARN"`) || strings.Contains(logs.String(), `"level":"ERROR"`) {
+		t.Fatalf("no warning expected when only kube-system exists:\n%s", logs.String())
+	}
+}
+
+// TestPodImagesNamespacePatternFilter drives discovery against a cluster
+// holding platform, system and tenant namespaces and checks exactly which
+// ones the pattern keeps.
+func TestPodImagesNamespacePatternFilter(t *testing.T) {
+	names := []string{
+		"kube-system", "glueops-core", "glueops-core-monitoring", "glueops-core-vault-extra", // keep
+		"glueops-corex", "nonprod", "chisel-operator-system", "default", "kube-public", // drop
+	}
+	objs := make([]runtime.Object, 0, len(names))
+	for _, n := range names {
+		objs = append(objs, namespaceObj(n))
+	}
+	client := fake.NewClientset(objs...)
+	listed := recordPodLists(client)
+	log, _ := testLogger()
+
+	section := PodImages(context.Background(), client, PodImagesParams{NamespacePattern: defaultPattern, MaxRows: 10}, log)
+	want := []string{"glueops-core", "glueops-core-monitoring", "glueops-core-vault-extra", "kube-system"}
+	if section.Status != payload.StatusOK || !reflect.DeepEqual(section.NamespacesRequested, want) {
+		t.Fatalf("default pattern: got %+v, want requested %v", section, want)
+	}
+	sort.Strings(*listed)
+	if !reflect.DeepEqual(*listed, want) {
+		t.Fatalf("pods were listed outside the matched namespaces: %v", *listed)
+	}
+
+	// A user pattern without anchors is anchored by the agent: "glueops-core"
+	// keeps glueops-core alone, never aglueops-corez or glueops-core-*.
+	client = fake.NewClientset(namespaceObj("glueops-core"), namespaceObj("aglueops-corez"), namespaceObj("glueops-core-monitoring"))
+	section = PodImages(context.Background(), client, PodImagesParams{NamespacePattern: mustNamespacePattern("glueops-core"), MaxRows: 10}, log)
+	if section.Status != payload.StatusOK || !reflect.DeepEqual(section.NamespacesRequested, []string{"glueops-core"}) {
+		t.Fatalf("unanchored user pattern must be anchored, got %+v", section)
+	}
+}
+
+// TestPodImagesNeverListsUnmatchedNamespaces plants a tenant pod with a
+// canary env value in "nonprod": no pods list may target that namespace and
+// the canary must reach neither the payload nor the logs.
+func TestPodImagesNeverListsUnmatchedNamespaces(t *testing.T) {
+	client := podsClient(append(k3dAndEKSPods(), tenantPod("nonprod", "tenant-app-abcde"), tenantPod("default", "scratch"))...)
+	listed := recordPodLists(client)
+	log, logs := testLogger()
+	section := PodImages(context.Background(), client, PodImagesParams{NamespacePattern: defaultPattern, MaxRows: 5000}, log)
+	if section.Status != payload.StatusOK || len(section.Data) != 13 {
+		t.Fatalf("unexpected section: status=%s rows=%d", section.Status, len(section.Data))
+	}
+	for _, ns := range *listed {
+		if ns == "nonprod" || ns == "default" {
+			t.Fatalf("pods were listed in an unmatched namespace: %v", *listed)
+		}
+	}
+	if len(*listed) != 2 {
+		t.Fatalf("expected one pods list per matched namespace, got %v", *listed)
+	}
+	raw, _ := json.Marshal(section)
+	for _, forbidden := range []string{markerTenantEnv, "nonprod", "tenant-app", "scratch"} {
+		if strings.Contains(string(raw), forbidden) {
+			t.Errorf("payload contains %q", forbidden)
+		}
+		if strings.Contains(logs.String(), forbidden) {
+			t.Errorf("logs contain %q", forbidden)
+		}
+	}
+	assertNoMarkers(t, "pod_images payload", string(raw))
+	assertNoMarkers(t, "logs", logs.String())
+}
+
+// TestPodImagesNamespaceListFailures covers discovery itself failing: the
+// section fails as a whole, with the usual error classification and no
+// namespaces to report.
+func TestPodImagesNamespaceListFailures(t *testing.T) {
+	cases := map[string]struct {
+		err  error
+		want string
+	}{
+		"forbidden":          {apierrors.NewForbidden(schema.GroupResource{Resource: "namespaces"}, "", errors.New("denied")), payload.ErrRBACDenied},
+		"server error":       {apierrors.NewInternalError(errors.New("etcd down")), payload.ErrAPIUnavailable},
+		"connection refused": {&url.Error{Op: "Get", URL: "https://10.0.0.1", Err: &net.OpError{Op: "dial", Err: errors.New("connection refused")}}, payload.ErrAPIUnavailable},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			client := podsClient(k3dAndEKSPods()...)
+			client.PrependReactor("list", "namespaces", func(action k8stesting.Action) (bool, runtime.Object, error) {
+				return true, nil, c.err
+			})
+			listed := recordPodLists(client)
+			log, logs := testLogger()
+			section := PodImages(context.Background(), client, PodImagesParams{NamespacePattern: defaultPattern, MaxRows: 10}, log)
+			if section.Status != payload.StatusError || section.Error != c.want || section.Data != nil {
+				t.Fatalf("expected error/%s with null data, got %+v", c.want, section)
+			}
+			if len(*listed) != 0 {
+				t.Fatalf("no pods may be listed when discovery failed, got %v", *listed)
+			}
+			raw, _ := json.Marshal(section)
+			want := `{"schema_version":1,"status":"error","error":"` + c.want + `","namespaces_requested":[],"namespaces_denied":[],"truncated":false,"data":null}`
+			if string(raw) != want {
+				t.Fatalf("unexpected wire form:\n%s", raw)
+			}
+			if !strings.Contains(logs.String(), `"reason":"`+c.want+`"`) {
+				t.Fatalf("expected %s in logs:\n%s", c.want, logs.String())
+			}
+		})
+	}
+}
+
+func TestPodImagesWithoutPatternIsInternalError(t *testing.T) {
+	log, _ := testLogger()
+	section := PodImages(context.Background(), podsClient(), PodImagesParams{MaxRows: 10}, log)
+	if section.Status != payload.StatusError || section.Error != payload.ErrInternal || section.Data != nil {
+		t.Fatalf("expected internal_error, got %+v", section)
 	}
 }
 

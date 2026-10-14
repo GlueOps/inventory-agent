@@ -9,13 +9,20 @@ endpoint, logs one structured summary line, and exits 0 no matter what.
 |-----------------|---------------------------------------------------------------|--------------------------------------------------------------------------|
 | `cluster`       | `GET /version`, `list nodes`                                  | Kubernetes version/platform; per node `status.nodeInfo` version fields   |
 | `helm_releases` | Helm release Secrets in `HELM_NAMESPACE` (label `owner=helm`) | Nine metadata fields per release, latest revision only                   |
-| `pod_images`    | `list pods` in each `POD_NAMESPACES` entry                    | One row per init/app container: owner, derived workload, image, digest   |
+| `pod_images`    | `list namespaces`, then `list pods` in each one matching `NAMESPACE_PATTERN` | One row per init/app container: owner, derived workload, image, digest   |
 
 `image_digest` is the registry manifest digest taken from the `@sha256:...`
 suffix of the runtime's `imageID`. A bare `sha256:...` `imageID` (containerd
 with no repo digest) is the image config digest, so `image_digest` is `null`
 while `image_id` keeps the raw value. Pending pods without statuses have both
 `null`.
+
+Pod namespaces are discovered, not configured: each run lists the cluster's
+Namespaces (one cluster-scoped `list`), keeps the names matching
+`NAMESPACE_PATTERN`, and lists pods only there. Nothing maintains a namespace
+list, a namespace that does not exist yet (or any more) is simply absent from
+`namespaces_requested`, and the pattern is an anchored allowlist, so tenant
+namespaces can never be swept in by accident.
 
 It never collects values, manifests, hooks, descriptions, env vars, args,
 volumes or any other pod spec field. The payload types are closed Go structs
@@ -30,7 +37,7 @@ All configuration is via environment variables.
 |----------------------------------|----------------------------|-----------------------------------------------------------------------------------------------|
 | `CAPTAIN_DOMAIN`                 | (required)                 | Cluster identity and join key. Rejected if it contains `placeholder`.                        |
 | `INGEST_URL`                     | `""`                       | Receiver URL. Must be `https://`. Empty: log `no_endpoint_configured`, exit 0.               |
-| `POD_NAMESPACES`                 | `kube-system,glueops-core` | Comma-separated namespaces to list pods in. The chart supplies the full list. Set-but-empty is `invalid_config`. |
+| `NAMESPACE_PATTERN`              | `kube-system\|glueops-core(-.*)?` | Go regexp selecting the namespaces whose pods are listed. The agent anchors it (`^(?:`...`)$`), so it must match the whole name: `glueops-core` matches `glueops-core` only, never `aglueops-corez` or `glueops-core-x`. Invalid regexp or set-but-empty is `invalid_config`. |
 | `HELM_NAMESPACE`                 | `glueops-core`             | Namespace whose Helm release Secrets are read. Set-but-empty is `invalid_config`.            |
 | `GLUEOPS_PLATFORM_CHART_VERSION` | `""`                       | Declared chart version, sent as `platform_chart_version`.                                    |
 | `DEV_MODE`                       | `false`                    | Allows `http://` for `INGEST_URL` (local/k3d only).                                          |
@@ -41,6 +48,10 @@ All configuration is via environment variables.
 | `HTTP_TIMEOUT`                   | `10s`                      | Per-attempt timeout for the POST.                                                            |
 | `RETRIES`                        | `2`                        | Extra attempts after the first POST (network errors, 429 and 5xx only).                      |
 | `KUBECONFIG`                     | `~/.kube/config`           | Used only when not running in-cluster.                                                       |
+
+The ServiceAccount needs `list` on Namespaces (cluster-scoped), `get`/`list`
+on Pods in every namespace the pattern can match, `get`/`list` on Secrets in
+`HELM_NAMESPACE`, and `get`/`list` on Nodes.
 
 There is no authentication in v1. `send.Options.BearerToken` is the reserved
 slot for a later token; nothing sets it today and a test asserts no
@@ -56,6 +67,12 @@ at the top; each dataset under `datasets` carries its own `schema_version`,
 `null` on error and `[]` when there is simply nothing there. One dataset
 failing never drops the others. All timestamps are RFC 3339 UTC with
 millisecond precision (`2026-10-01T05:00:00.123Z`).
+
+In `pod_images`, `namespaces_requested` is the sorted list of namespaces that
+existed and matched `NAMESPACE_PATTERN` at collection time, and
+`namespaces_denied` the subset whose pods the agent was refused (403). A
+partial refusal keeps the section `ok`; being refused everywhere, or failing
+to list namespaces at all, makes it `error`.
 
 The full schema is [`schema/payload.schema.json`](schema/payload.schema.json).
 A sample envelope lives in `internal/schema/schema_test.go` (`SampleEnvelope`).
@@ -89,7 +106,7 @@ http.server.HTTPServer(("127.0.0.1",8080),H).serve_forever()'
 export CAPTAIN_DOMAIN=nonprod.local.onglueops.com
 export INGEST_URL=http://127.0.0.1:8080/ingest
 export DEV_MODE=true
-export POD_NAMESPACES=kube-system,glueops-core
+# optional: NAMESPACE_PATTERN='kube-system|glueops-core(-.*)?' is the default
 go run .
 ```
 

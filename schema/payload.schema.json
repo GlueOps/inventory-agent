@@ -150,8 +150,16 @@
         "schema_version": { "type": "integer", "minimum": 1 },
         "status": { "$ref": "#/$defs/status" },
         "error": { "$ref": "#/$defs/error_code" },
-        "namespaces_requested": { "type": "array", "items": { "type": "string" } },
-        "namespaces_denied": { "type": "array", "items": { "type": "string" } },
+        "namespaces_requested": {
+          "description": "namespaces that existed and matched NAMESPACE_PATTERN at collection time",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "namespaces_denied": {
+          "description": "the subset of namespaces_requested whose pods the agent was refused (403)",
+          "type": "array",
+          "items": { "type": "string" }
+        },
         "truncated": { "type": "boolean" },
         "data": {
           "anyOf": [

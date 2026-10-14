@@ -34,8 +34,9 @@ import (
 )
 
 const (
-	secretMarker = "CANARY_ARGOCD_ADMIN_VALUE" // planted in a non-Helm Secret
-	podEnvMarker = "CANARY_POD_ENV_VALUE"      // planted as a pod env value
+	secretMarker    = "CANARY_ARGOCD_ADMIN_VALUE" // planted in a non-Helm Secret
+	podEnvMarker    = "CANARY_POD_ENV_VALUE"      // planted as a pod env value
+	tenantEnvMarker = "CANARY_TENANT_ENV_VALUE"   // planted in a pod of a namespace outside the pattern
 )
 
 type fakeSender struct {
@@ -58,6 +59,19 @@ func fixtureClient() *fake.Clientset {
 	ctrl := true
 	client := fake.NewClientset(
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "kube-system", UID: types.UID("uid-abc")}},
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "glueops-core"}},
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "acme-nonprod"}},
+		// A tenant pod: its namespace does not match the pattern, so it is
+		// never listed and nothing of it may surface anywhere.
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "tenant-app-abcde", Namespace: "acme-nonprod",
+				OwnerReferences: []metav1.OwnerReference{{Kind: "DaemonSet", Name: "tenant-app", Controller: &ctrl}}},
+			Spec: corev1.PodSpec{NodeName: "n1", Containers: []corev1.Container{{
+				Name: "app", Image: "ghcr.io/tenant/app:1.0.0",
+				Env: []corev1.EnvVar{{Name: "DATABASE_URL", Value: tenantEnvMarker}},
+			}}},
+			Status: corev1.PodStatus{Phase: corev1.PodRunning},
+		},
 		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1"}, Status: corev1.NodeStatus{NodeInfo: corev1.NodeSystemInfo{KubeletVersion: "v1.35.8"}}},
 		&corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Name: "argocd-secret", Namespace: "glueops-core"},
@@ -83,16 +97,24 @@ func fixtureClient() *fake.Clientset {
 
 func baseConfig() config.Config {
 	return config.Config{
-		CaptainDomain: "nonprod.foobar.onglueops.com",
-		IngestURL:     "https://ingest.example.com/v1/inventory",
-		PodNamespaces: []string{"kube-system", "glueops-core"},
-		HelmNamespace: "glueops-core",
-		MaxPodRows:    5000,
-		MaxGzipBytes:  2 << 20,
-		HTTPTimeout:   time.Second,
-		Retries:       1,
-		SendGzip:      true,
+		CaptainDomain:    "nonprod.foobar.onglueops.com",
+		IngestURL:        "https://ingest.example.com/v1/inventory",
+		NamespacePattern: mustPattern(config.DefaultNamespacePattern),
+		HelmNamespace:    "glueops-core",
+		MaxPodRows:       5000,
+		MaxGzipBytes:     2 << 20,
+		HTTPTimeout:      time.Second,
+		Retries:          1,
+		SendGzip:         true,
 	}
+}
+
+func mustPattern(pattern string) *regexp.Regexp {
+	re, err := config.CompileNamespacePattern(pattern)
+	if err != nil {
+		panic(err)
+	}
+	return re
 }
 
 func decodeBody(t *testing.T, body []byte) schema.Envelope {
@@ -135,6 +157,9 @@ func TestRunHappyPath(t *testing.T) {
 	}
 	if env.Datasets.Cluster.Status != "ok" || env.Datasets.HelmReleases.Status != "ok" || env.Datasets.PodImages.Status != "ok" || len(env.Datasets.PodImages.Data) != 1 {
 		t.Fatalf("unexpected sections: %+v", env.Datasets)
+	}
+	if got := env.Datasets.PodImages.NamespacesRequested; len(got) != 2 || got[0] != "glueops-core" || got[1] != "kube-system" {
+		t.Fatalf("namespaces_requested must be the matched namespaces only, got %v", got)
 	}
 	if !strings.Contains(logs, `"msg":"run summary"`) || !strings.Contains(logs, `"status":"ok"`) || !strings.Contains(logs, `"section_helm_releases":"ok"`) || !strings.Contains(logs, `"gzip":true`) {
 		t.Fatalf("summary line missing or wrong:\n%s", logs)
@@ -349,6 +374,17 @@ func TestRunRedaction(t *testing.T) {
 	for _, marker := range []string{secretMarker, podEnvMarker, "AWS_SECRET_ACCESS_KEY"} {
 		if bytes.Contains(raw, []byte(marker)) {
 			t.Errorf("decoded payload contains %q", marker)
+		}
+	}
+	// The tenant pod lives in a namespace outside the pattern, so it is
+	// never even listed: neither its env value nor its namespace or name may
+	// show up anywhere.
+	for _, marker := range []string{tenantEnvMarker, "acme-nonprod", "tenant-app"} {
+		if bytes.Contains(raw, []byte(marker)) {
+			t.Errorf("decoded payload contains %q", marker)
+		}
+		if strings.Contains(logs, marker) {
+			t.Errorf("logs contain %q", marker)
 		}
 	}
 }

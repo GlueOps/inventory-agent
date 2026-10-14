@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
+	"regexp/syntax"
 	"strconv"
 	"strings"
 	"time"
@@ -13,12 +15,15 @@ import (
 // Defaults.
 const (
 	DefaultHelmNamespace = "glueops-core"
-	DefaultPodNamespaces = "kube-system,glueops-core"
-	DefaultMaxPodRows    = 5000
-	DefaultMaxGzipBytes  = 2 * 1024 * 1024
-	DefaultHTTPTimeout   = 10 * time.Second
-	DefaultRetries       = 2
-	DefaultLogLevel      = "info"
+	// DefaultNamespacePattern selects kube-system and every glueops-core*
+	// namespace (glueops-core itself and glueops-core-<anything>); the
+	// agent anchors it, so "glueops-corex" or "aglueops-core" never match.
+	DefaultNamespacePattern = `kube-system|glueops-core(-.*)?`
+	DefaultMaxPodRows       = 5000
+	DefaultMaxGzipBytes     = 2 * 1024 * 1024
+	DefaultHTTPTimeout      = 10 * time.Second
+	DefaultRetries          = 2
+	DefaultLogLevel         = "info"
 )
 
 // Config is the fully parsed agent configuration.
@@ -28,8 +33,10 @@ type Config struct {
 	// IngestURL is where the snapshot is POSTed. Empty means "collect
 	// nothing, log no_endpoint_configured, exit 0".
 	IngestURL string
-	// PodNamespaces are the namespaces to list pods in, in order.
-	PodNamespaces []string
+	// NamespacePattern is the anchored regexp a namespace name must match
+	// for its pods to be listed. The namespaces themselves are discovered
+	// at collection time, so nothing has to maintain a list.
+	NamespacePattern *regexp.Regexp
 	// HelmNamespace is where Helm release Secrets are read.
 	HelmNamespace string
 	// PlatformChartVersion is the declared glueops-platform chart version.
@@ -56,11 +63,11 @@ type Config struct {
 // validates it. The returned error is suitable for logging; it never contains
 // values other than the offending variable name and a short reason.
 //
-// For most variables an empty value means "use the default". POD_NAMESPACES
-// and HELM_NAMESPACE are different: unset means the default, but set to an
-// empty (or whitespace/comma-only) value is a configuration error, because
-// the chart always sets them and an empty list would silently collect
-// nothing.
+// For most variables an empty value means "use the default".
+// NAMESPACE_PATTERN and HELM_NAMESPACE are different: unset means the
+// default, but set to an empty (or whitespace-only) value is a configuration
+// error, because the chart always sets them and an empty value would
+// silently collect nothing.
 func Load(lookup func(string) (string, bool)) (Config, error) {
 	var errs []error
 	get := func(key, def string) string {
@@ -100,13 +107,16 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		errs = append(errs, errors.New("CAPTAIN_DOMAIN still contains \"placeholder\""))
 	}
 
-	podNamespaces, explicit := getSet("POD_NAMESPACES", DefaultPodNamespaces)
-	cfg.PodNamespaces = splitList(podNamespaces)
-	if explicit && len(cfg.PodNamespaces) == 0 {
-		errs = append(errs, errors.New("POD_NAMESPACES is set but contains no namespaces"))
+	var err error
+	switch pattern, explicit := getSet("NAMESPACE_PATTERN", DefaultNamespacePattern); {
+	case explicit && pattern == "":
+		errs = append(errs, errors.New("NAMESPACE_PATTERN is set but empty"))
+	default:
+		if cfg.NamespacePattern, err = CompileNamespacePattern(pattern); err != nil {
+			errs = append(errs, fmt.Errorf("NAMESPACE_PATTERN: %w", err))
+		}
 	}
 
-	var err error
 	if cfg.DevMode, err = parseBool(get("DEV_MODE", "false")); err != nil {
 		errs = append(errs, fmt.Errorf("DEV_MODE: %w", err))
 	}
@@ -162,21 +172,23 @@ func ValidateIngestURL(raw string, devMode bool) error {
 	}
 }
 
-func splitList(s string) []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, part := range strings.Split(s, ",") {
-		p := strings.TrimSpace(part)
-		if p == "" || seen[p] {
-			continue
+// CompileNamespacePattern compiles pattern as a whole-name match. The
+// pattern is always wrapped in `^(?:` ... `)$`: for a pattern that is
+// already anchored the wrap changes nothing, and for anything else (including
+// partially anchored alternations such as `^a|b$`) it is what makes the
+// allowlist fail closed, because a bare "glueops-core" must never select
+// "aglueops-corez". The error names the syntax problem but never echoes the
+// pattern, in line with Load's contract.
+func CompileNamespacePattern(pattern string) (*regexp.Regexp, error) {
+	re, err := regexp.Compile("^(?:" + pattern + ")$")
+	if err != nil {
+		var se *syntax.Error
+		if errors.As(err, &se) {
+			return nil, fmt.Errorf("must be a valid Go regular expression (%s)", se.Code)
 		}
-		seen[p] = true
-		out = append(out, p)
+		return nil, errors.New("must be a valid Go regular expression")
 	}
-	if out == nil {
-		out = []string{}
-	}
-	return out
+	return re, nil
 }
 
 func parseBool(s string) (bool, error) {

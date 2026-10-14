@@ -114,7 +114,7 @@ func Run(ctx context.Context, cfg config.Config, deps Deps, log *slog.Logger) (e
 		CollectorVersion:     deps.Version,
 		RunID:                summary.RunID,
 		HelmNamespace:        cfg.HelmNamespace,
-		PodNamespaces:        cfg.PodNamespaces,
+		NamespacePattern:     cfg.NamespacePattern,
 		MaxPodRows:           cfg.MaxPodRows,
 	}, start, log)
 
