@@ -25,7 +25,7 @@ func TestRunAlwaysExitsZeroWithOneSummary(t *testing.T) {
 		env    map[string]string
 		status string
 	}{
-		"no endpoint":      {map[string]string{"CAPTAIN_DOMAIN": "nonprod.foo.onglueops.com"}, "no_endpoint_configured"},
+		"no endpoint":      {map[string]string{"CAPTAIN_DOMAIN": "nonprod.foo.onglueops.com", "INGEST_URL": ""}, "no_endpoint_configured"},
 		"invalid config":   {map[string]string{}, "invalid_config"},
 		"placeholder":      {map[string]string{"CAPTAIN_DOMAIN": "placeholder.onglueops.com", "INGEST_URL": "https://x"}, "invalid_config"},
 		"non-https url":    {map[string]string{"CAPTAIN_DOMAIN": "nonprod.foo.onglueops.com", "INGEST_URL": "http://x"}, "invalid_ingest_url"},

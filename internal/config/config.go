@@ -15,6 +15,10 @@ import (
 // Defaults.
 const (
 	DefaultHelmNamespace = "glueops-core"
+	// DefaultIngestURL is the GlueOps-operated receiver every captain reports
+	// to. One endpoint serves all environments; INGEST_URL overrides it for
+	// local testing.
+	DefaultIngestURL = "https://inventory-agent.glueopshosted.com/"
 	// DefaultNamespacePattern selects kube-system and every glueops-core*
 	// namespace (glueops-core itself and glueops-core-<anything>); the
 	// agent anchors it, so "glueops-corex" or "aglueops-core" never match.
@@ -30,7 +34,8 @@ const (
 type Config struct {
 	// CaptainDomain is required and is the join key for the cluster.
 	CaptainDomain string
-	// IngestURL is where the snapshot is POSTed. Empty means "collect
+	// IngestURL is where the snapshot is POSTed: DefaultIngestURL unless
+	// INGEST_URL is set. INGEST_URL set to an empty value means "collect
 	// nothing, log no_endpoint_configured, exit 0".
 	IngestURL string
 	// NamespacePattern is the anchored regexp a namespace name must match
@@ -67,7 +72,8 @@ type Config struct {
 // NAMESPACE_PATTERN and HELM_NAMESPACE are different: unset means the
 // default, but set to an empty (or whitespace-only) value is a configuration
 // error, because the chart always sets them and an empty value would
-// silently collect nothing.
+// silently collect nothing. INGEST_URL is different again: unset means
+// DefaultIngestURL, and set-but-empty deliberately turns sending off.
 func Load(lookup func(string) (string, bool)) (Config, error) {
 	var errs []error
 	get := func(key, def string) string {
@@ -90,10 +96,10 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 
 	cfg := Config{
 		CaptainDomain:        get("CAPTAIN_DOMAIN", ""),
-		IngestURL:            get("INGEST_URL", ""),
 		PlatformChartVersion: get("GLUEOPS_PLATFORM_CHART_VERSION", ""),
 		LogLevel:             get("LOG_LEVEL", DefaultLogLevel),
 	}
+	cfg.IngestURL, _ = getSet("INGEST_URL", DefaultIngestURL)
 
 	var explicit bool
 	if cfg.HelmNamespace, explicit = getSet("HELM_NAMESPACE", DefaultHelmNamespace); explicit && cfg.HelmNamespace == "" {

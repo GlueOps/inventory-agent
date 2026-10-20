@@ -23,6 +23,35 @@ func TestLoadDefaults(t *testing.T) {
 	if got := cfg.NamespacePattern.String(); got != "^(?:kube-system|glueops-core(-.*)?)$" {
 		t.Fatalf("unexpected default namespace pattern: %q", got)
 	}
+	if cfg.IngestURL != "https://inventory-agent.glueopshosted.com/" {
+		t.Fatalf("unexpected default ingest URL: %q", cfg.IngestURL)
+	}
+	if err := ValidateIngestURL(cfg.IngestURL, false); err != nil {
+		t.Fatalf("default ingest URL must pass validation without DEV_MODE: %v", err)
+	}
+}
+
+// INGEST_URL unset uses the default, set overrides it (local testing), and
+// set-but-empty turns sending off.
+func TestLoadIngestURL(t *testing.T) {
+	for name, c := range map[string]struct {
+		env  map[string]string
+		want string
+	}{
+		"unset":    {map[string]string{}, DefaultIngestURL},
+		"override": {map[string]string{"INGEST_URL": "https://ingest.example.com/v1"}, "https://ingest.example.com/v1"},
+		"empty":    {map[string]string{"INGEST_URL": ""}, ""},
+		"blank":    {map[string]string{"INGEST_URL": "   "}, ""},
+	} {
+		c.env["CAPTAIN_DOMAIN"] = "nonprod.foo.onglueops.com"
+		cfg, err := Load(env(c.env))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if cfg.IngestURL != c.want {
+			t.Errorf("%s: IngestURL = %q, want %q", name, cfg.IngestURL, c.want)
+		}
+	}
 }
 
 func TestLoadParsesEverything(t *testing.T) {
