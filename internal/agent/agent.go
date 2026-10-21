@@ -109,13 +109,12 @@ func Run(ctx context.Context, cfg config.Config, deps Deps, log *slog.Logger) (e
 	}
 
 	env, stats := collect.Envelope(ctx, deps.Client, collect.Params{
-		CaptainDomain:        cfg.CaptainDomain,
-		PlatformChartVersion: cfg.PlatformChartVersion,
-		CollectorVersion:     deps.Version,
-		RunID:                summary.RunID,
-		HelmNamespace:        cfg.HelmNamespace,
-		NamespacePattern:     cfg.NamespacePattern,
-		MaxPodRows:           cfg.MaxPodRows,
+		CaptainDomain:    cfg.CaptainDomain,
+		CollectorVersion: deps.Version,
+		RunID:            summary.RunID,
+		HelmNamespace:    cfg.HelmNamespace,
+		NamespacePattern: cfg.NamespacePattern,
+		MaxPodRows:       cfg.MaxPodRows,
 	}, start, log)
 
 	summary.Gzip = cfg.SendGzip

@@ -39,7 +39,6 @@ All configuration is via environment variables.
 | `INGEST_URL`                     | `https://inventory-agent.glueopshosted.com/` | Receiver URL. Must be `https://`. Unset: the default (one receiver for every environment). Set: override, e.g. for local testing. Set but empty: log `no_endpoint_configured`, exit 0. |
 | `NAMESPACE_PATTERN`              | `kube-system\|glueops-core(-.*)?` | Go regexp selecting the namespaces whose pods are listed. The agent anchors it (`^(?:`...`)$`), so it must match the whole name: `glueops-core` matches `glueops-core` only, never `aglueops-corez` or `glueops-core-x`. Invalid regexp or set-but-empty is `invalid_config`. |
 | `HELM_NAMESPACE`                 | `glueops-core`             | Namespace whose Helm release Secrets are read. Set-but-empty is `invalid_config`.            |
-| `GLUEOPS_PLATFORM_CHART_VERSION` | `""`                       | Declared chart version, sent as `platform_chart_version`.                                    |
 | `DEV_MODE`                       | `false`                    | Allows `http://` for `INGEST_URL` (local/k3d only).                                          |
 | `LOG_LEVEL`                      | `info`                     | `debug`, `info`, `warn` or `error`.                                                          |
 | `MAX_POD_ROWS`                   | `5000`                     | Row cap for `pod_images`; beyond it the section is cut and `truncated: true`.                |
@@ -60,13 +59,13 @@ slot for a later token; nothing sets it today and a test asserts no
 ## Payload
 
 One envelope per run. Run-level fields (`captain_domain`, `cluster_uid`,
-`run_id`, `collected_at`, `collector_version`, `platform_chart_version`) sit
-at the top; each dataset under `datasets` carries its own `schema_version`,
-`status` (`ok`|`error`), optional `error` code (`rbac_denied`,
-`api_unavailable`, `decode_failed`, `internal_error`) and `data`, which is
-`null` on error and `[]` when there is simply nothing there. One dataset
-failing never drops the others. All timestamps are RFC 3339 UTC with
-millisecond precision (`2026-10-01T05:00:00.123Z`).
+`run_id`, `collected_at`, `collector_version`) sit at the top; each dataset
+under `datasets` carries its own `schema_version`, `status` (`ok`|`error`),
+optional `error` code (`rbac_denied`, `api_unavailable`, `decode_failed`,
+`internal_error`) and `data`, which is `null` on error and `[]` when there is
+simply nothing there. One dataset failing never drops the others. All
+timestamps are RFC 3339 UTC with millisecond precision
+(`2026-10-01T05:00:00.123Z`).
 
 In `pod_images`, `namespaces_requested` is the sorted list of namespaces that
 existed and matched `NAMESPACE_PATTERN` at collection time, and

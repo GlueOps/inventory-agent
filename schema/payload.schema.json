@@ -12,7 +12,6 @@
     "run_id",
     "collected_at",
     "collector_version",
-    "platform_chart_version",
     "datasets"
   ],
   "properties": {
@@ -22,7 +21,6 @@
     "run_id": { "type": "string", "pattern": "^[0-9]{14}_[0-9a-f]{8}$" },
     "collected_at": { "$ref": "#/$defs/timestamp" },
     "collector_version": { "type": "string" },
-    "platform_chart_version": { "type": "string" },
     "datasets": {
       "type": "object",
       "additionalProperties": false,

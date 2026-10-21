@@ -17,11 +17,10 @@ import (
 
 // Params are the run-level inputs for an envelope.
 type Params struct {
-	CaptainDomain        string
-	PlatformChartVersion string
-	CollectorVersion     string
-	RunID                string
-	HelmNamespace        string
+	CaptainDomain    string
+	CollectorVersion string
+	RunID            string
+	HelmNamespace    string
 	// NamespacePattern selects the namespaces whose pods are listed; the
 	// namespaces themselves are discovered at collection time.
 	NamespacePattern *regexp.Regexp
@@ -40,12 +39,11 @@ type Stats struct {
 func Envelope(ctx context.Context, client kubernetes.Interface, p Params, now time.Time, log *slog.Logger) (schema.Envelope, Stats) {
 	var stats Stats
 	env := schema.Envelope{
-		SchemaVersion:        schema.EnvelopeSchemaVersion,
-		CaptainDomain:        p.CaptainDomain,
-		RunID:                p.RunID,
-		CollectedAt:          FormatTime(now),
-		CollectorVersion:     p.CollectorVersion,
-		PlatformChartVersion: p.PlatformChartVersion,
+		SchemaVersion:    schema.EnvelopeSchemaVersion,
+		CaptainDomain:    p.CaptainDomain,
+		RunID:            p.RunID,
+		CollectedAt:      FormatTime(now),
+		CollectorVersion: p.CollectorVersion,
 	}
 
 	if uid, err := ClusterUID(ctx, client); err != nil {

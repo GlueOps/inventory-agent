@@ -31,13 +31,12 @@ func str(s string) *string { return &s }
 // including nulls and an errored section.
 func SampleEnvelope() Envelope {
 	return Envelope{
-		SchemaVersion:        EnvelopeSchemaVersion,
-		CaptainDomain:        "nonprod.foobar.onglueops.com",
-		ClusterUID:           str("7897eb25-7a75-4903-b0f2-b8a849977428"),
-		RunID:                "20261001050000_3f9c2a7e",
-		CollectedAt:          "2026-10-01T05:00:00.412Z",
-		CollectorVersion:     "v0.1.0",
-		PlatformChartVersion: "0.80.2",
+		SchemaVersion:    EnvelopeSchemaVersion,
+		CaptainDomain:    "nonprod.foobar.onglueops.com",
+		ClusterUID:       str("7897eb25-7a75-4903-b0f2-b8a849977428"),
+		RunID:            "20261001050000_3f9c2a7e",
+		CollectedAt:      "2026-10-01T05:00:00.412Z",
+		CollectorVersion: "v0.1.0",
 		Datasets: Datasets{
 			Cluster: ClusterSection{
 				SchemaVersion: ClusterSchemaVersion,

@@ -44,8 +44,6 @@ type Config struct {
 	NamespacePattern *regexp.Regexp
 	// HelmNamespace is where Helm release Secrets are read.
 	HelmNamespace string
-	// PlatformChartVersion is the declared glueops-platform chart version.
-	PlatformChartVersion string
 	// DevMode relaxes the https-only rule for INGEST_URL.
 	DevMode bool
 	// SendGzip (default true) gzips the body and sets Content-Encoding: gzip.
@@ -95,9 +93,8 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	}
 
 	cfg := Config{
-		CaptainDomain:        get("CAPTAIN_DOMAIN", ""),
-		PlatformChartVersion: get("GLUEOPS_PLATFORM_CHART_VERSION", ""),
-		LogLevel:             get("LOG_LEVEL", DefaultLogLevel),
+		CaptainDomain: get("CAPTAIN_DOMAIN", ""),
+		LogLevel:      get("LOG_LEVEL", DefaultLogLevel),
 	}
 	cfg.IngestURL, _ = getSet("INGEST_URL", DefaultIngestURL)
 

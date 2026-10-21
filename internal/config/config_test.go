@@ -56,17 +56,16 @@ func TestLoadIngestURL(t *testing.T) {
 
 func TestLoadParsesEverything(t *testing.T) {
 	cfg, err := Load(env(map[string]string{
-		"CAPTAIN_DOMAIN":                 "nonprod.foo.onglueops.com",
-		"INGEST_URL":                     "https://ingest.example.com/v1",
-		"NAMESPACE_PATTERN":              " glueops-core-(argocd|vault).* ",
-		"HELM_NAMESPACE":                 "other",
-		"GLUEOPS_PLATFORM_CHART_VERSION": "0.80.2",
-		"DEV_MODE":                       "true",
-		"LOG_LEVEL":                      "debug",
-		"MAX_POD_ROWS":                   "10",
-		"MAX_GZIP_BYTES":                 "1024",
-		"HTTP_TIMEOUT":                   "3s",
-		"RETRIES":                        "1",
+		"CAPTAIN_DOMAIN":    "nonprod.foo.onglueops.com",
+		"INGEST_URL":        "https://ingest.example.com/v1",
+		"NAMESPACE_PATTERN": " glueops-core-(argocd|vault).* ",
+		"HELM_NAMESPACE":    "other",
+		"DEV_MODE":          "true",
+		"LOG_LEVEL":         "debug",
+		"MAX_POD_ROWS":      "10",
+		"MAX_GZIP_BYTES":    "1024",
+		"HTTP_TIMEOUT":      "3s",
+		"RETRIES":           "1",
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -74,7 +73,7 @@ func TestLoadParsesEverything(t *testing.T) {
 	if got := cfg.NamespacePattern.String(); got != "^(?:glueops-core-(argocd|vault).*)$" {
 		t.Fatalf("namespace pattern not trimmed/anchored: %q", got)
 	}
-	if cfg.HelmNamespace != "other" || cfg.PlatformChartVersion != "0.80.2" || !cfg.DevMode || cfg.LogLevel != "debug" ||
+	if cfg.HelmNamespace != "other" || !cfg.DevMode || cfg.LogLevel != "debug" ||
 		cfg.MaxPodRows != 10 || cfg.MaxGzipBytes != 1024 || cfg.HTTPTimeout != 3*time.Second || cfg.Retries != 1 {
 		t.Fatalf("unexpected config: %+v", cfg)
 	}

@@ -36,14 +36,14 @@ func TestEnvelopeAssemblesAllSections(t *testing.T) {
 	now := time.Date(2026, 10, 1, 5, 0, 0, 412_000_000, time.UTC)
 
 	env, stats := Envelope(context.Background(), client, Params{
-		CaptainDomain: "nonprod.foobar.onglueops.com", PlatformChartVersion: "0.80.2", CollectorVersion: "v0.1.0",
+		CaptainDomain: "nonprod.foobar.onglueops.com", CollectorVersion: "v0.1.0",
 		RunID: "20261001050000_3f9c2a7e", HelmNamespace: "glueops-core",
 		NamespacePattern: defaultPattern, MaxPodRows: 5000,
 	}, now, log)
 
 	if env.SchemaVersion != 1 || env.CaptainDomain != "nonprod.foobar.onglueops.com" || *env.ClusterUID != "uid-123" ||
 		env.RunID != "20261001050000_3f9c2a7e" || env.CollectedAt != "2026-10-01T05:00:00.412Z" ||
-		env.CollectorVersion != "v0.1.0" || env.PlatformChartVersion != "0.80.2" {
+		env.CollectorVersion != "v0.1.0" {
 		t.Fatalf("unexpected run-level fields: %+v", env)
 	}
 	if env.Datasets.Cluster.Status != payload.StatusOK || env.Datasets.HelmReleases.Status != payload.StatusOK || env.Datasets.PodImages.Status != payload.StatusOK {

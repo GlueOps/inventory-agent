@@ -45,12 +45,11 @@ type Envelope struct {
 	CaptainDomain string `json:"captain_domain"`
 	// ClusterUID is the UID of the kube-system Namespace. It is null only when
 	// the lookup failed; the failure is logged with a reason code.
-	ClusterUID           *string  `json:"cluster_uid"`
-	RunID                string   `json:"run_id"`
-	CollectedAt          string   `json:"collected_at"`
-	CollectorVersion     string   `json:"collector_version"`
-	PlatformChartVersion string   `json:"platform_chart_version"`
-	Datasets             Datasets `json:"datasets"`
+	ClusterUID       *string  `json:"cluster_uid"`
+	RunID            string   `json:"run_id"`
+	CollectedAt      string   `json:"collected_at"`
+	CollectorVersion string   `json:"collector_version"`
+	Datasets         Datasets `json:"datasets"`
 }
 
 // Datasets holds one self-contained section per dataset.
