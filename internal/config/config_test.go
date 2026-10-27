@@ -23,7 +23,7 @@ func TestLoadDefaults(t *testing.T) {
 	if got := cfg.NamespacePattern.String(); got != "^(?:kube-system|glueops-core(-.*)?)$" {
 		t.Fatalf("unexpected default namespace pattern: %q", got)
 	}
-	if cfg.IngestURL != "https://inventory-agent.glueopshosted.com/" {
+	if cfg.IngestURL != "https://inventory-agent.observability.glueopshosted.com/" {
 		t.Fatalf("unexpected default ingest URL: %q", cfg.IngestURL)
 	}
 	if err := ValidateIngestURL(cfg.IngestURL, false); err != nil {
