@@ -18,7 +18,7 @@ const (
 	// DefaultIngestURL is the GlueOps-operated receiver every captain reports
 	// to. One endpoint serves all environments; INGEST_URL overrides it for
 	// local testing.
-	DefaultIngestURL = "https://inventory-agent.glueopshosted.com/"
+	DefaultIngestURL = "https://inventory-agent.observability.glueopshosted.com/"
 	// DefaultNamespacePattern selects kube-system and every glueops-core*
 	// namespace (glueops-core itself and glueops-core-<anything>); the
 	// agent anchors it, so "glueops-corex" or "aglueops-core" never match.

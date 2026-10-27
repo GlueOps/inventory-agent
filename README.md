@@ -36,7 +36,7 @@ All configuration is via environment variables.
 | Variable                         | Default                    | Description                                                                                   |
 |----------------------------------|----------------------------|-----------------------------------------------------------------------------------------------|
 | `CAPTAIN_DOMAIN`                 | (required)                 | Cluster identity and join key. Rejected if it contains `placeholder`.                        |
-| `INGEST_URL`                     | `https://inventory-agent.glueopshosted.com/` | Receiver URL. Must be `https://`. Unset: the default (one receiver for every environment). Set: override, e.g. for local testing. Set but empty: log `no_endpoint_configured`, exit 0. |
+| `INGEST_URL`                     | `https://inventory-agent.observability.glueopshosted.com/` | Receiver URL. Must be `https://`. Unset: the default (one receiver for every environment). Set: override, e.g. for local testing. Set but empty: log `no_endpoint_configured`, exit 0. |
 | `NAMESPACE_PATTERN`              | `kube-system\|glueops-core(-.*)?` | Go regexp selecting the namespaces whose pods are listed. The agent anchors it (`^(?:`...`)$`), so it must match the whole name: `glueops-core` matches `glueops-core` only, never `aglueops-corez` or `glueops-core-x`. Invalid regexp or set-but-empty is `invalid_config`. |
 | `HELM_NAMESPACE`                 | `glueops-core`             | Namespace whose Helm release Secrets are read. Set-but-empty is `invalid_config`.            |
 | `DEV_MODE`                       | `false`                    | Allows `http://` for `INGEST_URL` (local/k3d only).                                          |
