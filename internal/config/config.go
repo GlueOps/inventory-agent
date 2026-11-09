@@ -28,6 +28,9 @@ const (
 	DefaultHTTPTimeout      = 10 * time.Second
 	DefaultRetries          = 2
 	DefaultLogLevel         = "info"
+	// MaxStartJitter bounds START_JITTER below the 15-minute schedule, so a
+	// delayed run cannot overlap the next one.
+	MaxStartJitter = 14 * time.Minute
 )
 
 // Config is the fully parsed agent configuration.
@@ -60,6 +63,10 @@ type Config struct {
 	HTTPTimeout time.Duration
 	// Retries is the number of additional attempts after the first POST.
 	Retries int
+	// StartJitter is the upper bound of a random delay taken before
+	// collection, so a fleet on the same schedule does not POST at the same
+	// instant. Zero (the default) means no delay.
+	StartJitter time.Duration
 }
 
 // Load reads configuration through lookup (usually os.LookupEnv) and
@@ -137,6 +144,9 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	}
 	if cfg.Retries, err = strconv.Atoi(get("RETRIES", strconv.Itoa(DefaultRetries))); err != nil || cfg.Retries < 0 || cfg.Retries > 10 {
 		errs = append(errs, errors.New("RETRIES: must be an integer between 0 and 10"))
+	}
+	if cfg.StartJitter, err = time.ParseDuration(get("START_JITTER", "0s")); err != nil || cfg.StartJitter < 0 || cfg.StartJitter > MaxStartJitter {
+		errs = append(errs, errors.New("START_JITTER: must be a duration between 0s and 14m"))
 	}
 
 	return cfg, errors.Join(errs...)

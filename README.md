@@ -46,6 +46,7 @@ All configuration is via environment variables.
 | `MAX_GZIP_BYTES`                 | `2097152`                  | Size cap for the body as sent (gzipped, or plain JSON when `SEND_GZIP=false`); `pod_images` rows are dropped until it fits. |
 | `HTTP_TIMEOUT`                   | `10s`                      | Per-attempt timeout for the POST.                                                            |
 | `RETRIES`                        | `2`                        | Extra attempts after the first POST (network errors, 429 and 5xx only).                      |
+| `START_JITTER`                   | `0s`                       | Upper bound of a random delay (`0s` to `14m`) taken before collecting, so captains on the same schedule do not all POST at once. Taken before the 4-minute run timeout starts, so the CronJob's `activeDeadlineSeconds` must cover `START_JITTER` + 4m. Skipped when there is no endpoint. |
 | `KUBECONFIG`                     | `~/.kube/config`           | Used only when not running in-cluster.                                                       |
 
 The ServiceAccount needs `list` on Namespaces (cluster-scoped), `get`/`list`
