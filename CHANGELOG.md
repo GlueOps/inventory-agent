@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/GlueOps/inventory-agent/compare/v1.2.0...v1.3.0) (2026-11-10)
+
+
+### Features
+
+* random start delay (START_JITTER) to spread the fleet's POSTs ([#14](https://github.com/GlueOps/inventory-agent/issues/14)) ([bdc8d95](https://github.com/GlueOps/inventory-agent/commit/bdc8d9552b501439c3548872bf6a35d0ca7861ba))
+
 ## [1.2.0](https://github.com/GlueOps/inventory-agent/compare/v1.1.0...v1.2.0) (2026-10-27)
 
 
