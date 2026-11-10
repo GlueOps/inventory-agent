@@ -110,6 +110,25 @@ func TestLoadSendGzip(t *testing.T) {
 	}
 }
 
+func TestLoadStartJitter(t *testing.T) {
+	for value, want := range map[string]time.Duration{"": 0, "0s": 0, "5m": 5 * time.Minute, "14m": 14 * time.Minute} {
+		cfg, err := Load(env(map[string]string{"CAPTAIN_DOMAIN": "x.com", "START_JITTER": value}))
+		if err != nil || cfg.StartJitter != want {
+			t.Errorf("START_JITTER=%q: got %v, %v; want %v", value, cfg.StartJitter, err, want)
+		}
+	}
+	for _, value := range []string{"-1s", "15m", "14m1s", "abc", "5"} {
+		_, err := Load(env(map[string]string{"CAPTAIN_DOMAIN": "x.com", "START_JITTER": value}))
+		if err == nil || !strings.Contains(err.Error(), "START_JITTER") {
+			t.Errorf("START_JITTER=%q: expected START_JITTER error, got %v", value, err)
+			continue
+		}
+		if strings.Contains(err.Error(), value) {
+			t.Errorf("START_JITTER=%q: error echoes the value: %v", value, err)
+		}
+	}
+}
+
 func TestLoadUnsetVersusEmptyNamespaces(t *testing.T) {
 	base := map[string]string{"CAPTAIN_DOMAIN": "x.com"}
 

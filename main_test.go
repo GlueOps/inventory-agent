@@ -2,9 +2,12 @@ package main
 
 import (
 	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func envFrom(m map[string]string) func(string) (string, bool) {
@@ -35,7 +38,7 @@ func TestRunAlwaysExitsZeroWithOneSummary(t *testing.T) {
 	}
 	for name, c := range cases {
 		var out bytes.Buffer
-		if code := run(envFrom(c.env), &out); code != 0 {
+		if code := run(envFrom(c.env), &out, noSleep(t)); code != 0 {
 			t.Errorf("%s: exit code %d, want 0", name, code)
 		}
 		logs := out.String()
@@ -52,4 +55,66 @@ func TestRunAlwaysExitsZeroWithOneSummary(t *testing.T) {
 			t.Errorf("%s: summary must carry a run_id:\n%s", name, logs)
 		}
 	}
+}
+
+// noSleep fails the test if the run tries to delay its start.
+func noSleep(t *testing.T) func(time.Duration) {
+	return func(d time.Duration) { t.Helper(); t.Errorf("unexpected start delay %s", d) }
+}
+
+// TestRunStartJitter: with START_JITTER set, the run sleeps once for less
+// than the bound and says so; unset, or with nothing to send, it never sleeps.
+func TestRunStartJitter(t *testing.T) {
+	t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "does-not-exist"))
+	t.Setenv("KUBERNETES_SERVICE_HOST", "")
+	t.Setenv("KUBERNETES_SERVICE_PORT", "")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer srv.Close()
+	base := map[string]string{"CAPTAIN_DOMAIN": "nonprod.foo.onglueops.com", "INGEST_URL": srv.URL, "DEV_MODE": "true"}
+	with := func(extra map[string]string) map[string]string {
+		m := map[string]string{}
+		for k, v := range base {
+			m[k] = v
+		}
+		for k, v := range extra {
+			m[k] = v
+		}
+		return m
+	}
+
+	t.Run("delays below the bound", func(t *testing.T) {
+		var slept []time.Duration
+		var out bytes.Buffer
+		run(envFrom(with(map[string]string{"START_JITTER": "5m"})), &out, func(d time.Duration) { slept = append(slept, d) })
+		if len(slept) != 1 || slept[0] < 0 || slept[0] >= 5*time.Minute {
+			t.Fatalf("slept %v, want one delay in [0, 5m)", slept)
+		}
+		logs := out.String()
+		if !strings.Contains(logs, `"msg":"start delayed"`) || !strings.Contains(logs, `"max_ms":300000`) {
+			t.Fatalf("missing start delayed line:\n%s", logs)
+		}
+		if n := strings.Count(logs, `"msg":"run summary"`); n != 1 {
+			t.Fatalf("expected one summary line, got %d:\n%s", n, logs)
+		}
+	})
+	t.Run("unset never sleeps", func(t *testing.T) {
+		var out bytes.Buffer
+		run(envFrom(base), &out, noSleep(t))
+		if strings.Contains(out.String(), "start delayed") {
+			t.Fatalf("unexpected start delayed line:\n%s", out.String())
+		}
+	})
+	t.Run("no endpoint never sleeps", func(t *testing.T) {
+		var out bytes.Buffer
+		run(envFrom(with(map[string]string{"START_JITTER": "5m", "INGEST_URL": ""})), &out, noSleep(t))
+	})
+	t.Run("invalid jitter is invalid_config", func(t *testing.T) {
+		var out bytes.Buffer
+		run(envFrom(with(map[string]string{"START_JITTER": "15m"})), &out, noSleep(t))
+		if !strings.Contains(out.String(), `"status":"invalid_config"`) {
+			t.Fatalf("want invalid_config:\n%s", out.String())
+		}
+	})
 }

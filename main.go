@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"os"
 	"time"
 
@@ -21,15 +22,18 @@ import (
 var version = "dev"
 
 // runTimeout is a far-off backstop below the CronJob's activeDeadlineSeconds.
+// It starts after the START_JITTER delay, so the chart's deadline must cover
+// both: START_JITTER + runTimeout + slack.
 const runTimeout = 4 * time.Minute
 
 func main() {
-	os.Exit(run(os.LookupEnv, os.Stdout))
+	os.Exit(run(os.LookupEnv, os.Stdout, time.Sleep))
 }
 
 // run is the whole process: it always returns 0 and always ends with exactly
-// one "run summary" log line, whichever path the run takes.
-func run(lookup func(string) (string, bool), out io.Writer) (code int) {
+// one "run summary" log line, whichever path the run takes. sleep is
+// time.Sleep outside tests.
+func run(lookup func(string) (string, bool), out io.Writer, sleep func(time.Duration)) (code int) {
 	level, _ := lookup("LOG_LEVEL")
 	log := logging.New(level, out)
 	summarized := false
@@ -59,6 +63,17 @@ func run(lookup func(string) (string, bool), out io.Writer) (code int) {
 		})
 		summarized = true
 		return 0
+	}
+
+	// Spread the fleet: every captain runs on the same schedule, so without a
+	// delay they all POST to the receiver at the same instant. The delay comes
+	// before the run timeout and the run ID, so it neither eats the run's
+	// budget nor makes collected_at earlier than the data. Nothing to send,
+	// nothing to spread.
+	if cfg.StartJitter > 0 && cfg.IngestURL != "" {
+		delay := rand.N(cfg.StartJitter)
+		log.Info("start delayed", "delay_ms", delay.Milliseconds(), "max_ms", cfg.StartJitter.Milliseconds())
+		sleep(delay)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), runTimeout)
