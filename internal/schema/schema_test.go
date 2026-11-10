@@ -111,6 +111,48 @@ func SampleEnvelope() Envelope {
 					},
 				},
 			},
+			ArgoCD: ArgoCDSection{
+				SchemaVersion: ArgoCDSchemaVersion,
+				Status:        StatusOK,
+				Data: &ArgoCDData{
+					RootApplication: "captain-manifests",
+					RootFound:       true,
+					ApplicationSets: []ArgoApplicationSet{{
+						Name:                 "nonprod-application-set",
+						Namespace:            "glueops-core",
+						RootSyncStatus:       str("Synced"),
+						Generators:           []string{"git"},
+						Project:              "nonprod",
+						DestinationServer:    str("https://kubernetes.default.svc"),
+						DestinationName:      nil,
+						DestinationNamespace: str("nonprod"),
+						Sources: []ArgoSource{
+							{RepoURL: "https://github.com/GlueOps/project-template-helm-chart-app.git", Chart: nil, Path: str("."), TargetRevision: "v0.12.0-rc1", Ref: nil},
+							{RepoURL: "https://github.com/development-tenant-venus/deployment-configurations", TargetRevision: "main", Ref: str("values")},
+						},
+						ApplicationCount: 1,
+						Conditions:       []ArgoCondition{{Type: "ErrorOccurred", Status: "False", Reason: "ApplicationSetUpToDate"}},
+						CreatedAt:        str("2026-11-04T05:58:13.000Z"),
+					}},
+					Applications: []ArgoApplication{{
+						Name:                 "back-end-antonios-tacos-prod",
+						Namespace:            "glueops-core",
+						ApplicationSet:       str("nonprod-application-set"),
+						Project:              "nonprod",
+						DestinationServer:    str("https://kubernetes.default.svc"),
+						DestinationNamespace: str("nonprod"),
+						Sources: []ArgoSource{
+							{RepoURL: "https://helm.gpkg.io/project-template", Chart: str("app"), TargetRevision: "0.17.1"},
+						},
+						SyncStatus:     "Synced",
+						SyncRevisions:  []string{"0.17.1"},
+						HealthStatus:   "Healthy",
+						OperationPhase: str("Succeeded"),
+						ReconciledAt:   str("2026-11-10T06:11:21.000Z"),
+						CreatedAt:      nil,
+					}},
+				},
+			},
 		},
 	}
 }
@@ -126,6 +168,7 @@ func TestSampleEnvelopeValidatesAgainstSchema(t *testing.T) {
 			e.Datasets.HelmReleases = HelmReleasesSection{SchemaVersion: 1, Status: StatusError, Error: ErrRBACDenied}
 			e.Datasets.PodImages = PodImagesSection{SchemaVersion: 1, Status: StatusError, Error: ErrInternal,
 				NamespacesRequested: []string{"kube-system"}, NamespacesDenied: []string{}}
+			e.Datasets.ArgoCD = ArgoCDSection{SchemaVersion: 1, Status: StatusError, Error: ErrRBACDenied}
 			return e
 		}(),
 		"empty lists": func() Envelope {
@@ -133,6 +176,8 @@ func TestSampleEnvelopeValidatesAgainstSchema(t *testing.T) {
 			e.Datasets.HelmReleases.Data = []HelmRelease{}
 			e.Datasets.PodImages.Data = []PodImage{}
 			e.Datasets.Cluster.Data.Nodes = []Node{}
+			e.Datasets.ArgoCD.Data = &ArgoCDData{RootApplication: "captain-manifests", RootFound: false,
+				ApplicationSets: []ArgoApplicationSet{}, Applications: []ArgoApplication{}}
 			return e
 		}(),
 	} {

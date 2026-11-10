@@ -294,3 +294,19 @@ func TestValidateIngestURL(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadArgoCD(t *testing.T) {
+	cfg, err := Load(env(map[string]string{"CAPTAIN_DOMAIN": "x.com"}))
+	if err != nil || cfg.ArgoCDNamespace != "glueops-core" || cfg.ArgoCDRootApplication != "captain-manifests" {
+		t.Fatalf("defaults: %+v, %v", cfg, err)
+	}
+	cfg, err = Load(env(map[string]string{"CAPTAIN_DOMAIN": "x.com", "ARGOCD_NAMESPACE": " argocd ", "ARGOCD_ROOT_APPLICATION": "root"}))
+	if err != nil || cfg.ArgoCDNamespace != "argocd" || cfg.ArgoCDRootApplication != "root" {
+		t.Fatalf("override: %+v, %v", cfg, err)
+	}
+	for _, key := range []string{"ARGOCD_NAMESPACE", "ARGOCD_ROOT_APPLICATION"} {
+		if _, err := Load(env(map[string]string{"CAPTAIN_DOMAIN": "x.com", key: " "})); err == nil || !strings.Contains(err.Error(), key) {
+			t.Errorf("%s set but empty: expected error, got %v", key, err)
+		}
+	}
+}

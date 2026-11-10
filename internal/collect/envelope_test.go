@@ -35,10 +35,10 @@ func TestEnvelopeAssemblesAllSections(t *testing.T) {
 	log, logs := testLogger()
 	now := time.Date(2026, 10, 1, 5, 0, 0, 412_000_000, time.UTC)
 
-	env, stats := Envelope(context.Background(), client, Params{
+	env, stats := Envelope(context.Background(), client, argoClient(venusLike()...), Params{
 		CaptainDomain: "nonprod.foobar.onglueops.com", CollectorVersion: "v0.1.0",
 		RunID: "20261001050000_3f9c2a7e", HelmNamespace: "glueops-core",
-		NamespacePattern: defaultPattern, MaxPodRows: 5000,
+		NamespacePattern: defaultPattern, MaxPodRows: 5000, ArgoCD: argoParams,
 	}, now, log)
 
 	if env.SchemaVersion != 1 || env.CaptainDomain != "nonprod.foobar.onglueops.com" || *env.ClusterUID != "uid-123" ||
@@ -46,10 +46,14 @@ func TestEnvelopeAssemblesAllSections(t *testing.T) {
 		env.CollectorVersion != "v0.1.0" {
 		t.Fatalf("unexpected run-level fields: %+v", env)
 	}
-	if env.Datasets.Cluster.Status != payload.StatusOK || env.Datasets.HelmReleases.Status != payload.StatusOK || env.Datasets.PodImages.Status != payload.StatusOK {
+	if env.Datasets.Cluster.Status != payload.StatusOK || env.Datasets.HelmReleases.Status != payload.StatusOK || env.Datasets.PodImages.Status != payload.StatusOK ||
+		env.Datasets.ArgoCD.Status != payload.StatusOK {
 		t.Fatalf("expected all sections ok: %+v", env.Datasets)
 	}
-	if stats.HelmDecodeFailed != 0 {
+	if a := env.Datasets.ArgoCD.Data; a == nil || len(a.ApplicationSets) != 1 || len(a.Applications) != 3 {
+		t.Fatalf("unexpected argocd section: %+v", env.Datasets.ArgoCD)
+	}
+	if stats.HelmDecodeFailed != 0 || stats.ArgoCDDecodeFailed != 0 {
 		t.Fatalf("unexpected stats: %+v", stats)
 	}
 	if got := env.Datasets.PodImages.NamespacesRequested; !reflect.DeepEqual(got, []string{"glueops-core", "kube-system"}) {
@@ -62,7 +66,7 @@ func TestEnvelopeAssemblesAllSections(t *testing.T) {
 
 func TestEnvelopeWithNilClient(t *testing.T) {
 	log, logs := testLogger()
-	env, _ := Envelope(context.Background(), nil, Params{CaptainDomain: "x", NamespacePattern: defaultPattern}, time.Now(), log)
+	env, _ := Envelope(context.Background(), nil, nil, Params{CaptainDomain: "x", NamespacePattern: defaultPattern, ArgoCD: argoParams}, time.Now(), log)
 	if env.ClusterUID != nil {
 		t.Fatal("expected nil cluster_uid")
 	}
@@ -70,6 +74,7 @@ func TestEnvelopeWithNilClient(t *testing.T) {
 		"cluster":       {env.Datasets.Cluster.Status, env.Datasets.Cluster.Error},
 		"helm_releases": {env.Datasets.HelmReleases.Status, env.Datasets.HelmReleases.Error},
 		"pod_images":    {env.Datasets.PodImages.Status, env.Datasets.PodImages.Error},
+		"argocd":        {env.Datasets.ArgoCD.Status, env.Datasets.ArgoCD.Error},
 	} {
 		if st[0] != payload.StatusError || st[1] != payload.ErrAPIUnavailable {
 			t.Errorf("%s: got %v, want error/api_unavailable", name, st)
@@ -86,11 +91,11 @@ func TestEnvelopeSectionPanicIsIsolated(t *testing.T) {
 		panic("boom in secrets")
 	})
 	log, logs := testLogger()
-	env, _ := Envelope(context.Background(), client, Params{CaptainDomain: "x", HelmNamespace: "glueops-core", NamespacePattern: defaultPattern, MaxPodRows: 10}, time.Now(), log)
+	env, _ := Envelope(context.Background(), client, argoClient(), Params{CaptainDomain: "x", HelmNamespace: "glueops-core", NamespacePattern: defaultPattern, MaxPodRows: 10, ArgoCD: argoParams}, time.Now(), log)
 	if env.Datasets.HelmReleases.Status != payload.StatusError || env.Datasets.HelmReleases.Error != payload.ErrInternal {
 		t.Fatalf("expected internal_error for helm, got %+v", env.Datasets.HelmReleases)
 	}
-	if env.Datasets.Cluster.Status != payload.StatusOK || env.Datasets.PodImages.Status != payload.StatusOK {
+	if env.Datasets.Cluster.Status != payload.StatusOK || env.Datasets.PodImages.Status != payload.StatusOK || env.Datasets.ArgoCD.Status != payload.StatusOK {
 		t.Fatalf("other sections must survive: %+v", env.Datasets)
 	}
 	if !strings.Contains(logs.String(), "section panicked") {

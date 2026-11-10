@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"time"
 
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/glueops/inventory-agent/internal/collect"
@@ -40,6 +41,8 @@ type Sender interface {
 type Deps struct {
 	// Client may be nil; every section then reports api_unavailable.
 	Client kubernetes.Interface
+	// Dynamic may be nil; the argocd section then reports api_unavailable.
+	Dynamic dynamic.Interface
 	// Sender posts the payload. nil means build one from the config.
 	Sender Sender
 	// Now supplies the clock (tests). nil means time.Now.
@@ -66,7 +69,12 @@ type Summary struct {
 	Gzip bool
 	// HelmDecodeFailed counts Helm release Secrets skipped as undecodable.
 	HelmDecodeFailed int
-	Envelope         *schema.Envelope
+	// ArgoCDDecodeFailed counts Argo CD objects skipped as undecodable.
+	ArgoCDDecodeFailed int
+	// ArgoCDApplicationSets and ArgoCDApplications are the reported counts.
+	ArgoCDApplicationSets int
+	ArgoCDApplications    int
+	Envelope              *schema.Envelope
 }
 
 // Run executes one collection run and returns the process exit code, which
@@ -108,13 +116,14 @@ func Run(ctx context.Context, cfg config.Config, deps Deps, log *slog.Logger) (e
 		return 0, summary
 	}
 
-	env, stats := collect.Envelope(ctx, deps.Client, collect.Params{
+	env, stats := collect.Envelope(ctx, deps.Client, deps.Dynamic, collect.Params{
 		CaptainDomain:    cfg.CaptainDomain,
 		CollectorVersion: deps.Version,
 		RunID:            summary.RunID,
 		HelmNamespace:    cfg.HelmNamespace,
 		NamespacePattern: cfg.NamespacePattern,
 		MaxPodRows:       cfg.MaxPodRows,
+		ArgoCD:           collect.ArgoCDParams{Namespace: cfg.ArgoCDNamespace, RootApplication: cfg.ArgoCDRootApplication},
 	}, start, log)
 
 	summary.Gzip = cfg.SendGzip
@@ -142,6 +151,11 @@ func Run(ctx context.Context, cfg config.Config, deps Deps, log *slog.Logger) (e
 	summary.PodRows = len(env.Datasets.PodImages.Data)
 	summary.Truncated = env.Datasets.PodImages.Truncated
 	summary.HelmDecodeFailed = stats.HelmDecodeFailed
+	summary.ArgoCDDecodeFailed = stats.ArgoCDDecodeFailed
+	if d := env.Datasets.ArgoCD.Data; d != nil {
+		summary.ArgoCDApplicationSets = len(d.ApplicationSets)
+		summary.ArgoCDApplications = len(d.Applications)
+	}
 
 	sender := deps.Sender
 	if sender == nil {
@@ -198,6 +212,7 @@ func sectionStatuses(env *schema.Envelope) map[string]string {
 		"cluster":       status(env.Datasets.Cluster.Status, env.Datasets.Cluster.Error),
 		"helm_releases": status(env.Datasets.HelmReleases.Status, env.Datasets.HelmReleases.Error),
 		"pod_images":    status(env.Datasets.PodImages.Status, env.Datasets.PodImages.Error),
+		"argocd":        status(env.Datasets.ArgoCD.Status, env.Datasets.ArgoCD.Error),
 	}
 }
 
@@ -213,10 +228,14 @@ func LogSummary(log *slog.Logger, s Summary) {
 		"section_cluster", s.Sections["cluster"],
 		"section_helm_releases", s.Sections["helm_releases"],
 		"section_pod_images", s.Sections["pod_images"],
+		"section_argocd", s.Sections["argocd"],
 		"pod_rows", s.PodRows,
 		"truncated", s.Truncated,
 		"gzip", s.Gzip,
 		"helm_decode_failed", s.HelmDecodeFailed,
+		"argocd_application_sets", s.ArgoCDApplicationSets,
+		"argocd_applications", s.ArgoCDApplications,
+		"argocd_decode_failed", s.ArgoCDDecodeFailed,
 	}
 	if s.Reason != "" {
 		attrs = append(attrs, "reason", s.Reason)

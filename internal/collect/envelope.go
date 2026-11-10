@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"time"
 
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/glueops/inventory-agent/internal/logging"
@@ -25,6 +26,8 @@ type Params struct {
 	// namespaces themselves are discovered at collection time.
 	NamespacePattern *regexp.Regexp
 	MaxPodRows       int
+	// ArgoCD selects the root Application whose sets and apps are reported.
+	ArgoCD ArgoCDParams
 }
 
 // Stats are run-level counters that are logged but not part of the payload.
@@ -32,11 +35,15 @@ type Stats struct {
 	// HelmDecodeFailed is the number of Helm release Secrets skipped because
 	// they could not be decoded.
 	HelmDecodeFailed int
+	// ArgoCDDecodeFailed is the number of Argo CD objects skipped because
+	// they could not be decoded.
+	ArgoCDDecodeFailed int
 }
 
-// Envelope collects all datasets and assembles the run envelope. client may
-// be nil, in which case every section reports api_unavailable.
-func Envelope(ctx context.Context, client kubernetes.Interface, p Params, now time.Time, log *slog.Logger) (schema.Envelope, Stats) {
+// Envelope collects all datasets and assembles the run envelope. client and
+// dyn may be nil, in which case the sections that need them report
+// api_unavailable (dyn serves only the argocd section).
+func Envelope(ctx context.Context, client kubernetes.Interface, dyn dynamic.Interface, p Params, now time.Time, log *slog.Logger) (schema.Envelope, Stats) {
 	var stats Stats
 	env := schema.Envelope{
 		SchemaVersion:    schema.EnvelopeSchemaVersion,
@@ -78,6 +85,14 @@ func Envelope(ctx context.Context, client kubernetes.Interface, p Params, now ti
 			NamespacesRequested: []string{},
 			NamespacesDenied:    []string{},
 		}
+	})
+
+	env.Datasets.ArgoCD = guard(log, "argocd", func() schema.ArgoCDSection {
+		section, skipped := ArgoCD(ctx, dyn, p.ArgoCD, log)
+		stats.ArgoCDDecodeFailed = skipped
+		return section
+	}, func(code string) schema.ArgoCDSection {
+		return schema.ArgoCDSection{SchemaVersion: schema.ArgoCDSchemaVersion, Status: schema.StatusError, Error: code}
 	})
 
 	return env, stats

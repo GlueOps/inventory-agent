@@ -85,7 +85,8 @@ func run(lookup func(string) (string, bool), out io.Writer, sleep func(time.Dura
 		log.Error("kubernetes client unavailable; every section will report api_unavailable",
 			"reason", logging.ReasonKubeClientUnavailable, "error", err.Error())
 	} else {
-		deps.Client = client
+		deps.Client = client.Kube
+		deps.Dynamic = client.Dynamic
 	}
 
 	code, _ = agent.Run(ctx, cfg, deps, log)

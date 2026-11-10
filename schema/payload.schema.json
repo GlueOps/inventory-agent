@@ -24,11 +24,12 @@
     "datasets": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["cluster", "helm_releases", "pod_images"],
+      "required": ["cluster", "helm_releases", "pod_images", "argocd"],
       "properties": {
         "cluster": { "$ref": "#/$defs/cluster_section" },
         "helm_releases": { "$ref": "#/$defs/helm_releases_section" },
-        "pod_images": { "$ref": "#/$defs/pod_images_section" }
+        "pod_images": { "$ref": "#/$defs/pod_images_section" },
+        "argocd": { "$ref": "#/$defs/argocd_section" }
       }
     }
   },
@@ -204,6 +205,120 @@
             { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
           ]
         }
+      }
+    },
+    "argocd_section": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "status", "data"],
+      "properties": {
+        "schema_version": { "type": "integer", "minimum": 1 },
+        "status": { "$ref": "#/$defs/status" },
+        "error": { "$ref": "#/$defs/error_code" },
+        "data": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/argocd_data" }] }
+      }
+    },
+    "argocd_data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root_application", "root_found", "application_sets", "applications"],
+      "properties": {
+        "root_application": { "type": "string", "minLength": 1 },
+        "root_found": { "type": "boolean" },
+        "application_sets": { "type": "array", "items": { "$ref": "#/$defs/argocd_application_set" } },
+        "applications": { "type": "array", "items": { "$ref": "#/$defs/argocd_application" } }
+      }
+    },
+    "argocd_source": {
+      "description": "Source identity only; repo_url never carries userinfo. Helm values, valuesObject, parameters and plugin env are never included.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repo_url", "chart", "path", "target_revision", "ref"],
+      "properties": {
+        "repo_url": { "type": "string" },
+        "chart": { "type": ["string", "null"] },
+        "path": { "type": ["string", "null"] },
+        "target_revision": { "type": "string" },
+        "ref": { "type": ["string", "null"] }
+      }
+    },
+    "argocd_condition": {
+      "description": "A status condition without its message.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "status", "reason"],
+      "properties": {
+        "type": { "type": "string" },
+        "status": { "type": "string" },
+        "reason": { "type": "string" }
+      }
+    },
+    "argocd_application_set": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "application_set_name",
+        "namespace",
+        "root_sync_status",
+        "generators",
+        "project",
+        "destination_server",
+        "destination_name",
+        "destination_namespace",
+        "sources",
+        "application_count",
+        "conditions",
+        "created_at"
+      ],
+      "properties": {
+        "application_set_name": { "type": "string" },
+        "namespace": { "type": "string" },
+        "root_sync_status": { "type": ["string", "null"] },
+        "generators": { "type": "array", "items": { "type": "string" } },
+        "project": { "type": "string" },
+        "destination_server": { "type": ["string", "null"] },
+        "destination_name": { "type": ["string", "null"] },
+        "destination_namespace": { "type": ["string", "null"] },
+        "sources": { "type": "array", "items": { "$ref": "#/$defs/argocd_source" } },
+        "application_count": { "type": "integer", "minimum": 0 },
+        "conditions": { "type": "array", "items": { "$ref": "#/$defs/argocd_condition" } },
+        "created_at": { "$ref": "#/$defs/nullable_timestamp" }
+      }
+    },
+    "argocd_application": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "application_name",
+        "namespace",
+        "application_set",
+        "project",
+        "destination_server",
+        "destination_name",
+        "destination_namespace",
+        "sources",
+        "sync_status",
+        "sync_revisions",
+        "health_status",
+        "operation_phase",
+        "reconciled_at",
+        "created_at"
+      ],
+      "properties": {
+        "application_name": { "type": "string" },
+        "namespace": { "type": "string" },
+        "application_set": { "type": ["string", "null"] },
+        "project": { "type": "string" },
+        "destination_server": { "type": ["string", "null"] },
+        "destination_name": { "type": ["string", "null"] },
+        "destination_namespace": { "type": ["string", "null"] },
+        "sources": { "type": "array", "items": { "$ref": "#/$defs/argocd_source" } },
+        "sync_status": { "type": "string" },
+        "sync_revisions": { "type": "array", "items": { "type": "string" } },
+        "health_status": { "type": "string" },
+        "operation_phase": { "type": ["string", "null"] },
+        "reconciled_at": { "$ref": "#/$defs/nullable_timestamp" },
+        "created_at": { "$ref": "#/$defs/nullable_timestamp" }
       }
     }
   }
