@@ -2,7 +2,7 @@
 
 A small, read-only Kubernetes collector for GlueOps captains. Each run (a
 CronJob every 15 minutes, rendered by the `glueops-platform` chart) collects
-three datasets and POSTs them as one gzipped JSON snapshot to an ingest
+four datasets and POSTs them as one gzipped JSON snapshot to an ingest
 endpoint, logs one structured summary line, and exits 0 no matter what.
 
 | Dataset         | Source                                                        | Contents                                                                 |
@@ -10,6 +10,7 @@ endpoint, logs one structured summary line, and exits 0 no matter what.
 | `cluster`       | `GET /version`, `list nodes`                                  | Kubernetes version/platform; per node `status.nodeInfo` version fields   |
 | `helm_releases` | Helm release Secrets in `HELM_NAMESPACE` (label `owner=helm`) | Nine metadata fields per release, latest revision only                   |
 | `pod_images`    | `list namespaces`, then `list pods` in each one matching `NAMESPACE_PATTERN` | One row per init/app container: owner, derived workload, image, digest   |
+| `argocd`        | `get` the root Application (`ARGOCD_ROOT_APPLICATION`), `list` ApplicationSets and Applications in `ARGOCD_NAMESPACE` | The ApplicationSets and Applications the root deploys: sources (repo, chart/path, `targetRevision`), sync/health status, synced revisions |
 
 `image_digest` is the registry manifest digest taken from the `@sha256:...`
 suffix of the runtime's `imageID`. A bare `sha256:...` `imageID` (containerd
@@ -23,6 +24,18 @@ Namespaces (one cluster-scoped `list`), keeps the names matching
 list, a namespace that does not exist yet (or any more) is simply absent from
 `namespaces_requested`, and the pattern is an anchored allowlist, so tenant
 namespaces can never be swept in by accident.
+
+The `argocd` section follows what the root Application (`captain-manifests`)
+manages, from its `status.resources`: every ApplicationSet it deploys, every
+Application those sets generated (by controller `ownerReference`), and any
+Application it deploys directly. Platform Applications deployed by the
+`glueops-platform` chart are not reported. Each source is reduced to
+`repo_url` (with any userinfo stripped), `chart`, `path`, `target_revision`
+and `ref`; a set reports its generator kinds and its template's sources,
+which may still hold template expressions. Helm `values`, `valuesObject`,
+`parameters`, `valueFiles`, plugin env, generator contents and condition
+messages are never decoded. A missing root Application (or no Argo CD at
+all) is `ok` with `root_found: false` and empty lists.
 
 It never collects values, manifests, hooks, descriptions, env vars, args,
 volumes or any other pod spec field. The payload types are closed Go structs
@@ -39,6 +52,8 @@ All configuration is via environment variables.
 | `INGEST_URL`                     | `https://inventory-agent.observability.glueopshosted.com/` | Receiver URL. Must be `https://`. Unset: the default (one receiver for every environment). Set: override, e.g. for local testing. Set but empty: log `no_endpoint_configured`, exit 0. |
 | `NAMESPACE_PATTERN`              | `kube-system\|glueops-core(-.*)?` | Go regexp selecting the namespaces whose pods are listed. The agent anchors it (`^(?:`...`)$`), so it must match the whole name: `glueops-core` matches `glueops-core` only, never `aglueops-corez` or `glueops-core-x`. Invalid regexp or set-but-empty is `invalid_config`. |
 | `HELM_NAMESPACE`                 | `glueops-core`             | Namespace whose Helm release Secrets are read. Set-but-empty is `invalid_config`.            |
+| `ARGOCD_NAMESPACE`               | `glueops-core`             | Namespace of Argo CD's Applications and ApplicationSets. Set-but-empty is `invalid_config`.   |
+| `ARGOCD_ROOT_APPLICATION`        | `captain-manifests`        | Application whose managed ApplicationSets and Applications are reported. Set-but-empty is `invalid_config`. |
 | `DEV_MODE`                       | `false`                    | Allows `http://` for `INGEST_URL` (local/k3d only).                                          |
 | `LOG_LEVEL`                      | `info`                     | `debug`, `info`, `warn` or `error`.                                                          |
 | `MAX_POD_ROWS`                   | `5000`                     | Row cap for `pod_images`; beyond it the section is cut and `truncated: true`.                |
@@ -51,7 +66,8 @@ All configuration is via environment variables.
 
 The ServiceAccount needs `list` on Namespaces (cluster-scoped), `get`/`list`
 on Pods in every namespace the pattern can match, `get`/`list` on Secrets in
-`HELM_NAMESPACE`, and `get`/`list` on Nodes.
+`HELM_NAMESPACE`, `get`/`list` on Nodes, and `get`/`list` on
+`applications` and `applicationsets` (`argoproj.io`) in `ARGOCD_NAMESPACE`.
 
 There is no authentication in v1. `send.Options.BearerToken` is the reserved
 slot for a later token; nothing sets it today and a test asserts no

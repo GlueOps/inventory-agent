@@ -15,6 +15,10 @@ import (
 // Defaults.
 const (
 	DefaultHelmNamespace = "glueops-core"
+	// DefaultArgoCDNamespace and DefaultArgoCDRootApplication locate the
+	// Application whose ApplicationSets and Applications are reported.
+	DefaultArgoCDNamespace       = "glueops-core"
+	DefaultArgoCDRootApplication = "captain-manifests"
 	// DefaultIngestURL is the GlueOps-operated receiver every captain reports
 	// to. One endpoint serves all environments; INGEST_URL overrides it for
 	// local testing.
@@ -47,6 +51,11 @@ type Config struct {
 	NamespacePattern *regexp.Regexp
 	// HelmNamespace is where Helm release Secrets are read.
 	HelmNamespace string
+	// ArgoCDNamespace is where Argo CD's Applications and ApplicationSets
+	// live; ArgoCDRootApplication is the Application whose managed sets and
+	// apps are reported.
+	ArgoCDNamespace       string
+	ArgoCDRootApplication string
 	// DevMode relaxes the https-only rule for INGEST_URL.
 	DevMode bool
 	// SendGzip (default true) gzips the body and sets Content-Encoding: gzip.
@@ -108,6 +117,12 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	var explicit bool
 	if cfg.HelmNamespace, explicit = getSet("HELM_NAMESPACE", DefaultHelmNamespace); explicit && cfg.HelmNamespace == "" {
 		errs = append(errs, errors.New("HELM_NAMESPACE is set but empty"))
+	}
+	if cfg.ArgoCDNamespace, explicit = getSet("ARGOCD_NAMESPACE", DefaultArgoCDNamespace); explicit && cfg.ArgoCDNamespace == "" {
+		errs = append(errs, errors.New("ARGOCD_NAMESPACE is set but empty"))
+	}
+	if cfg.ArgoCDRootApplication, explicit = getSet("ARGOCD_ROOT_APPLICATION", DefaultArgoCDRootApplication); explicit && cfg.ArgoCDRootApplication == "" {
+		errs = append(errs, errors.New("ARGOCD_ROOT_APPLICATION is set but empty"))
 	}
 
 	switch {

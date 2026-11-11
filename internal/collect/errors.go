@@ -16,16 +16,22 @@ import (
 // (for example when neither in-cluster config nor a kubeconfig was found).
 var errNoClient = errors.New("kubernetes client unavailable")
 
-// DecodeError marks a failure to decode a Helm release Secret. Its Error()
-// deliberately contains only the Secret name and the stage that failed, never
-// any of the decoded content, so it is safe to log.
+// DecodeError marks a failure to decode a Helm release Secret or an Argo CD
+// object. Its Error() deliberately contains only the kind, the object name
+// and the stage that failed, never any of the decoded content, so it is safe
+// to log.
 type DecodeError struct {
+	// Kind is empty for a Helm release Secret, else the object's kind.
+	Kind   string
 	Secret string
 	Stage  string
 	Err    error
 }
 
 func (e *DecodeError) Error() string {
+	if e.Kind != "" {
+		return fmt.Sprintf("decode %s %q: %s failed", e.Kind, e.Secret, e.Stage)
+	}
 	return fmt.Sprintf("decode release secret %q: %s failed", e.Secret, e.Stage)
 }
 

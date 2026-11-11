@@ -33,11 +33,22 @@ const (
 	// markerTenantEnv is planted only in pods of namespaces that must never
 	// be listed at all (tenant namespaces such as "nonprod").
 	markerTenantEnv = "CANARY_TENANT_ENV_VALUE"
+	// Argo CD: where tenant configuration and credentials can live in an
+	// Application or ApplicationSet.
+	markerArgoValues     = "CANARY_ARGO_HELM_VALUES"
+	markerArgoValuesObj  = "CANARY_ARGO_VALUES_OBJECT"
+	markerArgoParameter  = "CANARY_ARGO_HELM_PARAMETER"
+	markerArgoPluginEnv  = "CANARY_ARGO_PLUGIN_ENV"
+	markerArgoGenerator  = "CANARY_ARGO_LIST_ELEMENT"
+	markerArgoCondition  = "CANARY_ARGO_CONDITION_MESSAGE"
+	markerArgoRepoSecret = "CANARY_ARGO_REPO_TOKEN"
 )
 
 var sensitiveMarkers = []string{
 	markerValues, markerManifest, markerHooks, markerDescription,
 	markerPodEnv, markerPodArgs, markerOtherSecret, markerTenantEnv,
+	markerArgoValues, markerArgoValuesObj, markerArgoParameter, markerArgoPluginEnv,
+	markerArgoGenerator, markerArgoCondition, markerArgoRepoSecret,
 }
 
 // defaultPattern is the production default, compiled exactly as Load does.

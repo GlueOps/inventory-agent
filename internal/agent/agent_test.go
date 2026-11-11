@@ -24,9 +24,11 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/version"
 	fakediscovery "k8s.io/client-go/discovery/fake"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 
+	"github.com/glueops/inventory-agent/internal/collect"
 	"github.com/glueops/inventory-agent/internal/config"
 	"github.com/glueops/inventory-agent/internal/logging"
 	"github.com/glueops/inventory-agent/internal/schema"
@@ -130,6 +132,15 @@ func decodeBody(t *testing.T, body []byte) schema.Envelope {
 	return env
 }
 
+// emptyArgo is a dynamic client with no Argo CD objects: the argocd section
+// is then an ok, empty section.
+func emptyArgo() *dynamicfake.FakeDynamicClient {
+	return dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[k8sschema.GroupVersionResource]string{
+		collect.ApplicationGVR:    "ApplicationList",
+		collect.ApplicationSetGVR: "ApplicationSetList",
+	})
+}
+
 func runWith(t *testing.T, cfg config.Config, client *fake.Clientset, sender *fakeSender) (int, Summary, string) {
 	t.Helper()
 	var logs bytes.Buffer
@@ -137,6 +148,7 @@ func runWith(t *testing.T, cfg config.Config, client *fake.Clientset, sender *fa
 	deps := Deps{Sender: sender, Version: "v0.1.0-test", Now: func() time.Time { return time.Date(2026, 10, 1, 5, 0, 0, 0, time.UTC) }}
 	if client != nil {
 		deps.Client = client
+		deps.Dynamic = emptyArgo()
 	}
 	code, summary := Run(context.Background(), cfg, deps, log)
 	return code, summary, logs.String()
@@ -304,7 +316,7 @@ func TestRunWithoutGzipSendsPlainJSON(t *testing.T) {
 	cfg.DevMode = true
 	cfg.SendGzip = false
 	var logs bytes.Buffer
-	code, summary := Run(context.Background(), cfg, Deps{Client: fixtureClient(), Version: "t"}, logging.New("info", &logs))
+	code, summary := Run(context.Background(), cfg, Deps{Client: fixtureClient(), Dynamic: emptyArgo(), Version: "t"}, logging.New("info", &logs))
 	if code != 0 || summary.Status != StatusOK || summary.Gzip {
 		t.Fatalf("unexpected: code=%d summary=%+v", code, summary)
 	}
@@ -408,7 +420,7 @@ func TestRunSendFailedLogNeverContainsURLSecrets(t *testing.T) {
 		cfg.HTTPTimeout = 50 * time.Millisecond
 		cfg.IngestURL = base + "/ingest/CANARY_PATH_SEGMENT?token=CANARY_QUERY_VALUE"
 		var logs bytes.Buffer
-		code, summary := Run(context.Background(), cfg, Deps{Client: fixtureClient(), Version: "t"}, logging.New("debug", &logs))
+		code, summary := Run(context.Background(), cfg, Deps{Client: fixtureClient(), Dynamic: emptyArgo(), Version: "t"}, logging.New("debug", &logs))
 		if code != 0 || summary.Status != StatusSendFailed {
 			t.Fatalf("%s: unexpected: code=%d summary=%+v", name, code, summary)
 		}
