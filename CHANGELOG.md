@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0](https://github.com/GlueOps/inventory-agent/compare/v1.3.0...v1.4.0) (2026-11-11)
+
+
+### Features
+
+* report the ApplicationSets and Applications under captain-manifests ([#15](https://github.com/GlueOps/inventory-agent/issues/15)) ([91c384c](https://github.com/GlueOps/inventory-agent/commit/91c384cd8be7e50d0fe5c0cc4d6829ba8ad23379))
+
 ## [1.3.0](https://github.com/GlueOps/inventory-agent/compare/v1.2.0...v1.3.0) (2026-11-10)
 
 
