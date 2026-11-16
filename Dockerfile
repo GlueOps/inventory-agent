@@ -1,5 +1,5 @@
 # ---- build stage ----
-FROM golang:1.26-alpine@sha256:28d89ee9cc0ff9fec75c82ca201e6bf7fdf9a679d4b7b24dfa04f2bb766bb468 AS builder
+FROM golang:1.26-alpine@sha256:ecb67f987aa1a57794c91d19ade7ae0209f2f0f5496aaef9e6ae85ddf92d02ab AS builder
 
 # Set by the container_image workflow to the git tag (vX.Y.Z); surfaces as
 # collector_version in every snapshot.
